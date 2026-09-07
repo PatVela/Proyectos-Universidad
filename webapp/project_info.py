@@ -22,9 +22,9 @@ PROJECT_INFO = {
 
     # ---------------------- Autoría ----------------------
     # Deja los campos vacíos si aún no los tienes; la app los omite.
-    "autor": "",                      # ej. "Juerg P. Velásquez"
-    "autor_email": "",                # ej. "jvelasquez@unsa.edu.pe"
-    "asesor": "",                     # ej. "Ing. María Gómez, M.Sc."
+    "autor": "J.P.D.V & J.J.H.N",                      # ej. "Juerg P. Velásquez"
+    "autor_email": "jdiazve@unsa.edu.pe & jhuillcan@unsa.edu.pe",                # ej. "jvelasquez@unsa.edu.pe"
+    "asesor": "Tu Viejo Echaiz",                     # ej. "Ing. María Gómez, M.Sc."
     "asesor_cargo": "",               # ej. "Docente del curso · UNSA"
 
     # ---------------------- Sobre el sistema ----------------------
