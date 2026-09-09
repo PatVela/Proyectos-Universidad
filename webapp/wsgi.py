@@ -1,9 +1,11 @@
 """WSGI entry point for deploying the ECG web app with gunicorn / waitress.
 
-Reads two environment variables to decide which model to load at import time:
+Reads environment variables to decide which model/reference data to load at
+import time:
 
-    ECG_SAVED   -> directory of checkpoints (auto-selects the lowest val_loss)
-    ECG_MODEL   -> explicit path to a .pt checkpoint (takes precedence)
+    ECG_SAVED      -> directory of checkpoints (auto-selects the lowest val_loss)
+    ECG_MODEL      -> explicit path to a .pt checkpoint (takes precedence)
+    ECG_REFERENCE  -> optional path to CinC2017 REFERENCE-v3.csv
 
 Defaults match the CLI (--saved saved, --model <given>). Example:
 
@@ -33,10 +35,13 @@ logging.basicConfig(level=logging.INFO,
 log = logging.getLogger('ecg-wsgi')
 
 import prediction as pred_mod
-from app import app, _init_service
+from app import app, _init_reference, _init_service
 
-# Load the model ONCE at import (shared across gunicorn workers).
+# Load the reference labels and model ONCE at import (shared per worker).
 _SAVED = os.environ.get('ECG_SAVED', 'saved')
 _MODEL = os.environ.get('ECG_MODEL')
+_REFERENCE = os.environ.get('ECG_REFERENCE')
+_init_reference(_REFERENCE)
 _init_service(_SAVED, _MODEL)
-log.info("WSGI app inicializada (saved=%s, model=%s)", _SAVED, _MODEL or '(auto)')
+log.info("WSGI app inicializada (saved=%s, model=%s, reference=%s)",
+         _SAVED, _MODEL or '(auto)', _REFERENCE or '(auto)')

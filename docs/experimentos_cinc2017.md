@@ -16,6 +16,23 @@ La pestaña **Resultado** no mezcla modelos: usa únicamente el checkpoint que F
 
 La pestaña **Experimentos** solo muestra resultados ya calculados por `compare_models.py` y `robustness.py`; no cambia el modelo usado para clasificar el ECG cargado por el usuario.
 
+### Comparación automática con etiqueta real del CSV
+
+También puedes iniciar la app con el archivo oficial de etiquetas:
+
+```bash
+python webapp/app.py --saved saved/cinc17_resnet --reference dataset2017/REFERENCE-v3.csv
+```
+
+Cuando subas un ECG cuyo nombre conserve el ID oficial (`A00001.mat`, `A00001.dat`, `A00001.csv`, etc.), la app buscará esa fila en `REFERENCE-v3.csv` y mostrará en **Resultado**:
+
+- etiqueta real del dataset;
+- predicción del modelo;
+- si coincide o no coincide;
+- fuente de la etiqueta (`REFERENCE-v3.csv`).
+
+Si el nombre del archivo no permite identificar el registro, todavía puedes escribir manualmente el diagnóstico conocido en el campo **Diagnóstico conocido (opcional)**.
+
 ## Experimento 1 · Réplica del modelo original
 
 Entrena la arquitectura residual del paper con `examples/cinc17/config.json`.

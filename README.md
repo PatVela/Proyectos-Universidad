@@ -168,10 +168,14 @@ Acepta **CSV** (una derivación), **`.mat`**, **`.dat`** y **`.npy`**:
 ```bash
 # desarrollo
 python webapp/app.py --saved saved
+# con comparación automática contra etiquetas reales de CinC2017:
+python webapp/app.py --saved saved --reference dataset2017/REFERENCE-v3.csv
 # abre http://127.0.0.1:5000/
 # para ver desde otro dispositivo / WSL2:
 python webapp/app.py --saved saved --host 0.0.0.0 --port 5000
 ```
+
+Si se carga `REFERENCE-v3.csv`, la app compara automáticamente la predicción con la etiqueta real cuando el archivo subido conserva el ID oficial del registro, por ejemplo `A00001.mat`, `A00001.dat` o `A00001.csv`. También se puede consultar el estado desde `GET /reference`.
 
 ### Despliegue en producción
 

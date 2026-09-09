@@ -81,6 +81,7 @@ def build_report(data, project, reference):
     fs = data.get('fs')
     dur = data.get('duration')
     lead = data.get('lead') or ''
+    ground_truth = data.get('ground_truth') or None
     classes = data.get('classes') or []
 
     inst = project.get('institucion', '')
@@ -107,11 +108,25 @@ def build_report(data, project, reference):
          Paragraph('%s%s' % (dominant, (' (%s%%)' % pct) if pct is not None else ''), value)],
         [Paragraph('Confianza', label),
          Paragraph(('%.1f%%' % conf) if conf is not None else '—', value)],
+    ]
+    if ground_truth:
+        gt_name = ground_truth.get('name') or ground_truth.get('label') or '—'
+        gt_code = ground_truth.get('label') or '—'
+        gt_ok = ground_truth.get('correct')
+        gt_src = ground_truth.get('source') or ''
+        gt_rec = ground_truth.get('record') or ''
+        gt_text = '%s (%s) · %s%s%s' % (
+            gt_name, gt_code,
+            'predicción correcta' if gt_ok else 'predicción distinta',
+            (' · registro ' + str(gt_rec)) if gt_rec else '',
+            (' · ' + str(gt_src)) if gt_src else '')
+        rows.append([Paragraph('Etiqueta real', label), Paragraph(gt_text, value)])
+    rows.extend([
         [Paragraph('Parámetros de registro', label),
          Paragraph('%s Hz · 1 derivación%s · duración %s s'
                    % (fs, (' (' + str(lead) + ')') if lead else '',
                       ('%.1f' % dur) if dur is not None else ''), value)],
-    ]
+    ])
     t = Table(rows, colWidths=[45 * mm, 130 * mm], hAlign='LEFT')
     t.setStyle(TableStyle([
         ('FONTNAME', (0, 0), (-1, -1), BODY_FONT),

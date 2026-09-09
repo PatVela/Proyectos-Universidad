@@ -112,6 +112,13 @@
         <label><span class="muted" data-i18n="step1.gt">Diagnóstico conocido (opcional)</span>
           <input type="text" id="trueLabel" class="label-input" placeholder="Normal, AF, Otro, Ruido"></label>
       </div>
+      <p class="hint muted reference-hint">
+        {% if reference_count %}
+          REFERENCE-v3.csv cargado: {{ reference_count }} etiquetas reales. Si el archivo subido se llama como el registro oficial, por ejemplo <code>A00001.mat</code>, la app comparará automáticamente predicción vs etiqueta real.
+        {% else %}
+          Para comparación automática con etiqueta real, inicia la app con <code>--reference ruta/REFERENCE-v3.csv</code> o coloca el CSV en <code>dataset2017/REFERENCE-v3.csv</code>. También puedes escribir la etiqueta manualmente arriba.
+        {% endif %}
+      </p>
 
       <div class="quickwrap">
         <div class="quick-label" data-i18n="step1.quick">Ejemplos rápidos</div>
@@ -417,5 +424,5 @@
 
 <script src="{{ url_for('static', filename='plotly.min.js') }}"></script>
 <script src="{{ url_for('static', filename='app.js') }}"></script>
-<script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a385bff899a1950c',t:'MTc4ODk1MjI2Mg=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+<script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a385db2b3baff03f',t:'MTc4ODk1MzM3Ng=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>

@@ -12,6 +12,7 @@ Run (from the project root, virtualenv active):
 from __future__ import absolute_import
 
 import argparse
+import csv
 import json
 import logging
 import os
@@ -71,6 +72,8 @@ def add_security_headers(resp):
 SERVICE = None          # current PredictionService
 SERVICE_LOCK = threading.Lock()
 MODELS_DIR = 'saved'
+REFERENCE_LABELS = {}   # {record_id -> true CinC2017 label}, loaded from REFERENCE-v3.csv
+REFERENCE_PATH = None
 
 
 def _jsonable(result):
@@ -87,6 +90,110 @@ def _sanitize(err):
     for frag in [os.path.abspath(os.curdir), _REPO_ROOT, '\\n', 'Traceback']:
         text = text.replace(frag, '...')
     return text[:300]
+
+
+def _normalize_label(label):
+    """Map human labels or CinC2017 labels to the canonical class code."""
+    if label is None:
+        return ''
+    raw = str(label).strip()
+    key = raw.lower()
+    mapping = {
+        'n': 'N', 'normal': 'N', 'ritmo normal': 'N',
+        'a': 'A', 'af': 'A', 'fa': 'A', 'fibrilacion': 'A',
+        'fibrilación': 'A', 'fibrilacion auricular': 'A',
+        'fibrilación auricular': 'A',
+        'o': 'O', 'otro': 'O', 'other': 'O', 'otro ritmo': 'O',
+        '~': '~', 'ruido': '~', 'noise': '~', 'artefacto': '~',
+        '|': '|', 'sin clasificar': '|', 'unclassified': '|',
+    }
+    return mapping.get(key, raw.upper())
+
+
+def _record_id_from_filename(filename):
+    """Extract a CinC2017 record id from an uploaded filename.
+
+    Examples: A00001.mat -> A00001, A00001.dat -> A00001,
+    A00001.csv -> A00001. If a user uploads a converted file with suffixes, the
+    first token before '-'/'_' is also tried.
+    """
+    name = secure_filename(filename or '')
+    stem = os.path.splitext(os.path.basename(name))[0].upper()
+    if not stem:
+        return ''
+    # direct official format
+    if stem.startswith('A') and len(stem) >= 6 and stem[1:6].isdigit():
+        return stem[:6]
+    # tolerate names such as A00001_export.csv or A00001-filtered.npy
+    for sep in ('_', '-', ' '):
+        token = stem.split(sep)[0]
+        if token.startswith('A') and len(token) >= 6 and token[1:6].isdigit():
+            return token[:6]
+    return stem
+
+
+def _candidate_reference_paths(explicit=None):
+    """Candidate locations for REFERENCE-v3.csv, in priority order."""
+    paths = []
+    for p in (explicit, os.environ.get('ECG_REFERENCE')):
+        if p:
+            paths.append(p)
+    paths.extend([
+        os.path.join(_REPO_ROOT, 'dataset2017', 'REFERENCE-v3.csv'),
+        os.path.join(_REPO_ROOT, 'training2017', 'REFERENCE-v3.csv'),
+        os.path.join(_REPO_ROOT, 'data', 'REFERENCE-v3.csv'),
+        os.path.join(_REPO_ROOT, 'examples', 'cinc17', 'REFERENCE-v3.csv'),
+        os.path.join(_REPO_ROOT, 'REFERENCE-v3.csv'),
+    ])
+    # Arena/local attachment fallback; harmless outside this environment.
+    paths.append(os.path.join(os.path.expanduser('~'), 'uploads', 'REFERENCE-v3.csv'))
+    return paths
+
+
+def _load_reference_csv(path):
+    labels = {}
+    with open(path, 'r', encoding='utf-8-sig', newline='') as f:
+        reader = csv.reader(f)
+        for row in reader:
+            if len(row) < 2:
+                continue
+            rec = row[0].strip().upper()
+            lab = _normalize_label(row[1])
+            if not rec or rec in ('RECORD', 'RECORDING') or not lab:
+                continue
+            labels[rec] = lab
+    return labels
+
+
+def _init_reference(reference_csv=None):
+    """Load REFERENCE-v3.csv if available. The app still works without it."""
+    global REFERENCE_LABELS, REFERENCE_PATH
+    REFERENCE_LABELS = {}
+    REFERENCE_PATH = None
+    for path in _candidate_reference_paths(reference_csv):
+        path = os.path.abspath(path)
+        if not os.path.exists(path):
+            continue
+        try:
+            labels = _load_reference_csv(path)
+        except Exception as e:
+            log.warning('No se pudo leer REFERENCE-v3.csv (%s): %s', path, e)
+            continue
+        if labels:
+            REFERENCE_LABELS = labels
+            REFERENCE_PATH = path
+            log.info('Etiquetas reales cargadas: %d registros desde %s',
+                     len(REFERENCE_LABELS), REFERENCE_PATH)
+            return labels
+    log.info('No se encontró REFERENCE-v3.csv; comparación automática desactivada.')
+    return {}
+
+
+def _lookup_reference_label(filename):
+    rec = _record_id_from_filename(filename)
+    if not rec:
+        return None, None
+    return rec, REFERENCE_LABELS.get(rec)
 
 
 def _model_train_date(path):
@@ -162,6 +269,21 @@ def metrics_status():
     })
 
 
+@app.route('/reference', methods=['GET'])
+def reference_status():
+    """Return REFERENCE-v3.csv status and optionally the true label for ?record=."""
+    record = (request.args.get('record') or '').strip()
+    record = _record_id_from_filename(record) if record else ''
+    return jsonify({
+        'ok': True,
+        'file_found': bool(REFERENCE_LABELS),
+        'path': REFERENCE_PATH,
+        'count': len(REFERENCE_LABELS),
+        'record': record or None,
+        'label': REFERENCE_LABELS.get(record) if record else None,
+    })
+
+
 @app.route('/experiments', methods=['GET'])
 def experiments_status():
     exp = _load_experiment_results()
@@ -195,6 +317,8 @@ def index():
         model_hash=pred_mod._short_model_id(SERVICE.model_path)
         if SERVICE and SERVICE.model_path else '',
         model_n_params=n_params,
+        reference_path=REFERENCE_PATH,
+        reference_count=len(REFERENCE_LABELS),
         metrics=_load_metrics_json(),
         experiments=_load_experiment_results())
 
@@ -245,7 +369,11 @@ def predict():
     os.makedirs(os.path.dirname(tmp_path), exist_ok=True)
     file.save(tmp_path)
 
-    true_label = (request.form.get('label') or '').strip().upper()
+    manual_label_raw = (request.form.get('label') or '').strip()
+    manual_label = _normalize_label(manual_label_raw) if manual_label_raw else ''
+    record_id, reference_label = _lookup_reference_label(file.filename)
+    true_label = manual_label or reference_label
+    label_source = 'manual' if manual_label else ('REFERENCE-v3.csv' if reference_label else None)
     try:
         info = pred_mod.load_signal(tmp_path, file.filename)
         mat, n_channels, fs = info['mat'], info['n_channels'], info['fs']
@@ -282,10 +410,17 @@ def predict():
         result['models'] = [os.path.relpath(p, MODELS_DIR)
                             for p in pred_mod.list_checkpoints(MODELS_DIR)]
         result['info'] = SERVICE.info()
-        # compare against a user-provided ground-truth label, if given
-        if true_label and true_label in SERVICE.classes:
-            result['ground_truth'] = {'label': true_label,
-                                      'correct': true_label == result['dominant']}
+        result['record_id'] = record_id
+        # Compare against a user-provided label or, if absent, the official
+        # REFERENCE-v3.csv label matched by filename (A00001.mat -> A00001).
+        if true_label:
+            result['ground_truth'] = {
+                'label': true_label,
+                'correct': true_label == result['dominant'] if true_label in SERVICE.classes else None,
+                'known_by_model': true_label in SERVICE.classes,
+                'source': label_source,
+                'record': record_id,
+            }
     except Exception as e:
         log.warning("Predicción fallida: %s", e)
         return jsonify({'ok': False, 'error': _sanitize(e)}), 400
@@ -402,8 +537,11 @@ def main():
                         help="directory with checkpoints (auto-selects the best)")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=5000)
+    parser.add_argument("--reference", default=None,
+                        help="path to CinC2017 REFERENCE-v3.csv for automatic real-label comparison")
     args = parser.parse_args()
 
+    _init_reference(args.reference)
     _init_service(args.saved, args.model)
 
     # Run Flask threaded so switching models / concurrent requests do not block.

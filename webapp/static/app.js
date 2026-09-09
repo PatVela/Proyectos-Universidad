@@ -363,7 +363,21 @@ function renderGroundTruth(data) {
   gtBox.innerHTML = "";
   if (data.ground_truth) {
     const g = data.ground_truth;
-    gtBox.innerHTML = `<div class="gt ${g.correct?"gt-ok":"gt-bad"}">${g.correct?"✔":"✘"} ${g.correct?(LANG==="es"?"Coincide con el diagnóstico indicado":"Matches the given diagnosis"):(LANG==="es"?"No coincide con el diagnóstico indicado":"Does not match the given diagnosis")} (${data.dominant})</div>`;
+    const predName = cInfo(data.dominant).name;
+    const trueName = cInfo(g.label).name;
+    const source = g.source === "REFERENCE-v3.csv"
+      ? (LANG === "es" ? "REFERENCE-v3.csv" : "REFERENCE-v3.csv")
+      : (LANG === "es" ? "ingresado manualmente" : "entered manually");
+    const record = g.record ? ` · ${LANG==="es"?"registro":"record"} ${escapeHtml(g.record)}` : "";
+    if (g.correct === null || g.correct === undefined) {
+      gtBox.innerHTML = `<div class="gt gt-bad">⚠ ${LANG==="es"?"Etiqueta real encontrada, pero no pertenece a las clases del modelo":"Real label found, but it is not among the model classes"}: <strong>${escapeHtml(g.label)}</strong>${record} · ${source}</div>`;
+      return;
+    }
+    gtBox.innerHTML = `<div class="gt ${g.correct?"gt-ok":"gt-bad"}">
+      ${g.correct?"✔":"✘"} ${g.correct?(LANG==="es"?"Predicción correcta":"Correct prediction"):(LANG==="es"?"Predicción distinta a la etiqueta real":"Prediction differs from the real label")}<br>
+      ${LANG==="es"?"Etiqueta real":"Real label"}: <strong>${escapeHtml(trueName)} (${escapeHtml(g.label)})</strong> ·
+      ${LANG==="es"?"Predicción":"Prediction"}: <strong>${escapeHtml(predName)} (${escapeHtml(data.dominant || "—")})</strong>${record} · ${source}
+    </div>`;
   }
 }
 function isDark() { return document.documentElement.dataset.theme === "dark"; }
@@ -519,6 +533,8 @@ function renderReport(data) {
   const conf = dominantConfidence(data);
   const lead = data.channel_name || "";
   const rows = (data.summary || []).map(s => `<tr><td>${cInfo(s.label).name}</td><td>${s.pct}%</td><td>${s.count}</td></tr>`).join("");
+  const gt = data.ground_truth || null;
+  const gtRow = gt ? `<tr><th>${LANG==="es"?"Etiqueta real":"Real label"}</th><td>${escapeHtml(cInfo(gt.label).name)} (${escapeHtml(gt.label)}) · ${gt.correct?"✔":"✘"}</td></tr>` : "";
   $("reportBody").innerHTML = `
     <div class="report-head">
       <div class="r-inst">${escapeHtml(t("app.title"))} — Informe ECG</div>
@@ -530,6 +546,7 @@ function renderReport(data) {
       <tr><th>${LANG==="es"?"Fecha":"Date"}</th><td>${now}</td></tr>
       <tr><th>${LANG==="es"?"Ritmo predominante":"Dominant rhythm"}</th><td>${info.name} (${pct}%)</td></tr>
       <tr><th>${LANG==="es"?"Confianza":"Confidence"}</th><td>${conf !== null ? conf + "%" : "—"}</td></tr>
+      ${gtRow}
       <tr><th>${LANG==="es"?"Parámetros de registro":"Recording parameters"}</th><td>${fs} Hz · 1 derivación${lead ? " ("+lead+")" : ""} · duración ${(data.n_samples_in/fs).toFixed(1)} s</td></tr>
     </table>
     <table>
@@ -593,6 +610,13 @@ async function downloadReport() {
       fs: Math.round(lastResult.applied_fs || lastResult.orig_fs || 300),
       duration: (lastResult.n_samples_in || 0) / (lastResult.applied_fs || 300),
       lead: lastResult.channel_name || "",
+      ground_truth: lastResult.ground_truth ? {
+        label: lastResult.ground_truth.label,
+        name: cInfo(lastResult.ground_truth.label).name,
+        correct: lastResult.ground_truth.correct,
+        source: lastResult.ground_truth.source,
+        record: lastResult.ground_truth.record,
+      } : null,
       classes: (lastResult.summary || []).map(s => ({ name: cInfo(s.label).name, pct: s.pct, count: s.count })),
     };
     const resp = await fetch("/report.pdf", {
