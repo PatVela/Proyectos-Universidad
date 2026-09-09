@@ -1,218 +1,462 @@
-# ECG Web App (Flask)
+# ECG Web App Flask
 
-Aplicación web interactiva para clasificar señales de ECG de **una sola
-derivación** con el modelo PyTorch entrenado en CinC2017 (réplica de Hannun et
-al. 2019). Subes un archivo de señal y te devuelve el **trazado interactivo**
-con la predicción coloreada por intervalo (cada 256 muestras), la distribución
-de clases del registro y las predicciones por intervalo.
+Aplicación web interactiva para clasificar señales ECG de **una sola derivación** usando checkpoints PyTorch entrenados con el paquete `ecg/` del repositorio.
 
-La app usa el mismo paquete `ecg/` del proyecto (`ecg.network`, el `Preproc` y el
-checkpoint guardado por `ecg/train.py`), así que **no duplica la arquitectura ni
-la normalización**: usa exactamente el modelo que entrenaste.
+La app está pensada para acompañar el trabajo experimental sobre **PhysioNet/CinC2017**:
+
+- muestra la predicción por intervalos de 256 muestras;
+- muestra la distribución de clases del registro;
+- permite descargar un informe PDF;
+- muestra métricas reales del modelo;
+- muestra la comparación **ResNet-34 vs CNN convencional**;
+- muestra el análisis de **robustez**;
+- compara automáticamente contra las etiquetas reales de `REFERENCE-v3.csv` cuando el archivo subido conserva el ID oficial del registro.
+
+---
 
 ## Requisitos
 
-- Un modelo entrenado (un `.pt` de `saved/`), o simplemente la carpeta `saved/`.
-  Si aún no lo tienes: `python ecg/train.py examples/cinc17/config.json -e cinc17`.
-- `flask`, `matplotlib` y `scipy` (en `requirements.txt`).
-
-## Ejecutar (desarrollo)
+Desde la raíz del proyecto:
 
 ```bash
-# Opción A: indicar el checkpoint exacto
-python webapp/app.py --model saved/cinc17/<timestamp>/0.123-0.980-012-1.000-0.990.pt
+pip install -r requirements.txt
+```
 
-# Opción B: elegir automáticamente el mejor (menor val_loss) de una carpeta
+Necesitas al menos un checkpoint `.pt`, por ejemplo entrenado con:
+
+```bash
+python -m ecg.train examples/cinc17/config.json \
+  -e cinc17_resnet \
+  --seed 2018
+```
+
+Opcionalmente, para comparación automática con etiqueta real, necesitas el archivo oficial:
+
+```text
+REFERENCE-v3.csv
+```
+
+---
+
+## Ejecutar en desarrollo
+
+### Usar la ResNet-34 principal
+
+```bash
+python webapp/app.py \
+  --saved saved/cinc17_resnet \
+  --reference dataset2017/REFERENCE-v3.csv \
+  --host 127.0.0.1 \
+  --port 5000
+```
+
+Abre:
+
+```text
+http://127.0.0.1:5000/
+```
+
+### Usar un checkpoint exacto
+
+```bash
+python webapp/app.py \
+  --model saved/cinc17_resnet/<timestamp>/<checkpoint>.pt \
+  --reference dataset2017/REFERENCE-v3.csv
+```
+
+### Usar la CNN convencional
+
+```bash
+python webapp/app.py \
+  --saved saved/cinc17_cnn \
+  --reference dataset2017/REFERENCE-v3.csv
+```
+
+### Elegir automáticamente el mejor checkpoint global
+
+```bash
 python webapp/app.py --saved saved
-
-# puerto/host personalizados (0.0.0.0 permite acceder desde la red local / WSL2)
-python webapp/app.py --saved saved --port 5000 --host 0.0.0.0
 ```
 
-Abre `http://127.0.0.1:5000/`.
+> Si `saved/` contiene tanto ResNet como CNN, la app elegirá el checkpoint con menor `val_loss` dentro de toda la carpeta. Para demostraciones científicas, se recomienda usar `--model` exacto o `--saved saved/cinc17_resnet`.
 
-## Ejecutar en producción (servidor WSGI)
+---
 
-El servidor de desarrollo de Flask (`app.run`) **no** está pensado para
-producción ni para varios usuarios simultáneos. Para desplegarlo de verdad:
+## Modelo usado en la pestaña Resultado
 
-**Opción 1 — con `gunicorn` (Linux/macOS/Servidor):**
+La pestaña **Resultado** usa únicamente el modelo cargado en `PredictionService` al arrancar Flask.
+
+| Comando | Modelo usado en Resultado |
+|---|---|
+| `--saved saved/cinc17_resnet` | ResNet-34. |
+| `--saved saved/cinc17_cnn` | CNN convencional. |
+| `--model ruta/checkpoint.pt` | Exactamente ese checkpoint. |
+| `--saved saved` | Mejor checkpoint global por menor `val_loss`. |
+
+La interfaz muestra el modelo usado para cada predicción, por ejemplo:
+
+```text
+Modelo usado para este resultado: ResNet-34
+```
+
+---
+
+## Comparación automática con etiqueta real
+
+Si la app se inicia con:
 
 ```bash
-pip install gunicorn
-# variables de entorno para elegir el modelo (opcional; si no se indican,
-# la app usa --saved saved por defecto)
-export ECG_MODEL="saved/cinc17/<ts>/<best>.pt"   # o ECG_SAVED="saved"
-gunicorn -w 2 -b 0.0.0.0:5000 --timeout 120 "webapp.wsgi:app"
+--reference dataset2017/REFERENCE-v3.csv
 ```
 
-**Opción 2 — con `waitress` (Windows nativo):**
+entonces carga el CSV oficial de etiquetas reales:
+
+```text
+A00001,N
+A00002,N
+A00003,N
+A00004,A
+...
+```
+
+Cuando subes un archivo cuyo nombre contiene el ID oficial, la app lo compara automáticamente:
+
+```text
+A00004.mat  -> busca A00004 en REFERENCE-v3.csv
+A00004.dat  -> busca A00004 en REFERENCE-v3.csv
+A00004.csv  -> busca A00004 en REFERENCE-v3.csv
+A00004_filtrado.npy -> busca A00004 en REFERENCE-v3.csv
+```
+
+En **Resultado** se muestra:
+
+```text
+Etiqueta real: Fibrilación auricular (A)
+Predicción: Fibrilación auricular (A)
+✔ Predicción correcta
+```
+
+o, si no coincide:
+
+```text
+Etiqueta real: Normal (N)
+Predicción: Otro ritmo (O)
+✘ Predicción distinta a la etiqueta real
+```
+
+Si el archivo no conserva el ID oficial, puedes usar el campo manual:
+
+```text
+Diagnóstico conocido (opcional)
+```
+
+Acepta valores como:
+
+```text
+N, A, O, ~
+Normal, AF, Otro, Ruido
+```
+
+### Rutas donde se busca automáticamente `REFERENCE-v3.csv`
+
+Si no pasas `--reference`, la app intenta encontrarlo en:
+
+```text
+dataset2017/REFERENCE-v3.csv
+training2017/REFERENCE-v3.csv
+data/REFERENCE-v3.csv
+examples/cinc17/REFERENCE-v3.csv
+REFERENCE-v3.csv
+```
+
+---
+
+## Secciones de la interfaz
+
+### 1. Cargar ECG
+
+Permite:
+
+- arrastrar o seleccionar archivo;
+- escribir datos opcionales de paciente;
+- escribir diagnóstico conocido manualmente;
+- usar ejemplos sintéticos rápidos;
+- seleccionar derivación si el archivo tiene varios canales.
+
+### 2. Resultado
+
+Muestra:
+
+- ritmo predominante;
+- confianza media del ritmo predominante;
+- distribución de clases;
+- modelo usado para la predicción;
+- comparación con etiqueta real si está disponible;
+- ECG interactivo con bandas de color por intervalo;
+- tabla de clasificación por tramos;
+- descarga de informe PDF.
+
+### 3. Detalle Técnico
+
+Muestra:
+
+- arquitectura cargada: ResNet-34 o CNN convencional;
+- clases reconocidas;
+- número de parámetros;
+- checkpoint e ID del modelo;
+- métricas exportadas por `evaluate.py`;
+- matriz de confusión y F1 por clase si existen las imágenes.
+
+Para generar esas métricas:
 
 ```bash
-pip install waitress
-waitress-serve --listen=*:5000 "webapp.wsgi:app"
+python examples/cinc17/evaluate.py \
+  --data_json examples/cinc17/dev.json \
+  --saved saved/cinc17_resnet \
+  --save_metrics_dir webapp/static/metrics
 ```
 
-> La app expone `app` como objeto de nivel de módulo (para poder cargarla por
-> `nombre:app`), y `webapp/wsgi.py` lee las variables de entorno
-> `ECG_SAVED` / `ECG_MODEL` para arrancar el `PredictionService` en el import.
+### 4. Experimentos
 
-### Acceso desde otras redes (LAN e internet)
+Muestra automáticamente resultados ya calculados de:
 
-**Misma red (Wi-Fi / LAN):** ejecuta con `--host 0.0.0.0` (o `--listen=*:PUERTO`)
-y abre la **IP local** de tu máquina (Windows: `ipconfig` → IPv4). Debes permitir
-el puerto en el **firewall** (Windows Defender Firewall → permitir puerto entrante,
-o regla de entrada para el puerto elegido). Desde otro dispositivo de la misma red
-usa `http://<IP-de-tu-PC>:5000/` (no `127.0.0.1`).
+1. **ResNet-34 vs CNN convencional**.
+2. **Robustez frente a perturbaciones ECG**.
 
-**Otra red (internet), sin IP pública ni port-forwarding:** usa un **túnel HTTPS**.
-El script `webapp/run_public.sh` abre uno automáticamente:
+La app no entrena ni evalúa todo el dataset desde el navegador; solo lee archivos generados previamente.
+
+---
+
+## Generar resultados para la pestaña Experimentos
+
+### Comparación ResNet vs CNN
 
 ```bash
-# opción 1 — Cloudflare Tunnel (gratuito, sin cuenta para uso básico)
-./webapp/run_public.sh          # imprime la URL pública https://...trycloudflare.com
-
-# opción 2 — ngrok (requiere token)
-ngrok config add-authtoken <TU_TOKEN>
-TUNNEL=ngrok ./webapp/run_public.sh
+python examples/cinc17/compare_models.py \
+  --data_json examples/cinc17/dev.json \
+  --resnet_saved saved/cinc17_resnet \
+  --cnn_saved saved/cinc17_cnn \
+  --out_dir results/cinc17/resnet_vs_cnn
 ```
 
-El túnel **termina TLS**, así que cualquiera en otra red abre la app por
-`https://<url-pública>/` de forma segura. **Recomendación:** usa un túnel solo
-para demo; cierra la URL cuando termines (la URL es accesible por cualquiera que
-la tenga). Para un despliegue estable, sube a Render/Heroku (ver abajo).
+La app lee:
 
-> En la interfaz, para abrir desde otro dispositivo recuerda que NO se usa
-> `127.0.0.1` (loopback de la app) sino la IP/URL pública. `0.0.0.0` y `[::]`
-> son direcciones de escucha del servidor, no URL de navegación.
+```text
+results/cinc17/resnet_vs_cnn/comparison_metrics.json
+```
 
-### HTTPS / Seguridad
+### Robustez ResNet
 
-`wsgi.py` y `app.py` **no pueden** hacer TLS por sí solos de forma "mágica"; el
-HTTPS se termina en la capa de servidor/proxy. Tienes dos vías:
-
-**A) TLS directo con un certificado** (para prueba interna / demo):
 ```bash
-./webapp/run_https.sh    # genera un cert autofirmado en certs/ y sirve por https://
-# o con tu propio certificado:
-CERT=mi-cert.pem KEY=mi-key.pem ./webapp/run_https.sh
+python examples/cinc17/robustness.py \
+  --data_json examples/cinc17/dev.json \
+  --saved saved/cinc17_resnet \
+  --out_dir results/cinc17/robustness_resnet \
+  --seed 1234
 ```
-(waitress necesita `--ssl-certfile`/`--ssl-keyfile`; `run_https.sh` se los pasa.)
 
-**B) TLS terminado por un proxy / plataforma** (producción real):
-- **nginx + Let's Encrypt (certbot)** como reverse proxy delante de gunicorn/waitress.
-- **caddy** (configura TLS automáticamente con un dominio).
-- **Render / Heroku / Railway** → gestionan HTTPS automáticamente; solo expones
-  el `Procfile` (`web: gunicorn ...`) y el certificado es de la plataforma.
+La app lee:
 
-**Cabeceras de seguridad** (ya aplicadas por `add_security_headers` en `app.py`):
-`Content-Security-Policy`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
-`Referrer-Policy`, `Permissions-Policy`, `Cache-Control: no-store`, y
-**`Strict-Transport-Security` (HSTS)** que se activa **solo** cuando la petición
-llega por HTTPS (detectado por `request.is_secure` o `X-Forwarded-Proto: https`).
-Configura `ProxyFix`/un proxy que ponga `X-Forwarded-Proto` si usas reverso proxy.
+```text
+results/cinc17/robustness_resnet/robustness_metrics.json
+```
 
-> **Privacidad:** los campos de paciente (nombre/edad) se usan **solo en el
-> navegador** para el informe; no se envían al servidor ni se persisten. No
-> introduzcas datos de salud reales en una demo pública.
+### Robustez CNN
 
-### Notas de despliegue
+```bash
+python examples/cinc17/robustness.py \
+  --data_json examples/cinc17/dev.json \
+  --saved saved/cinc17_cnn \
+  --out_dir results/cinc17/robustness_cnn \
+  --seed 1234
+```
 
-- **Carga del modelo:** se realiza una sola vez al arrancar (en el import), no
-  por request, así que es seguro usar varios workers de gunicorn.
-- **Memoria:** el modelo vive en GPU (o CPU) y se comparte entre request; con un
-  único modelo por worker el uso de VRAM es bajo (batch = 1).
-- **Hilos:** la app se sirve con `threaded=True`, y el cambio de modelo
-  (`/use_model`) está protegido con un lock para no dejar un estado inconsistente.
-- **Limpieza de subidas:** los archivos se guardan con un nombre temporal único
-  (`uuid4`) y **se borran tras procesarlos**; la carpeta `uploads/` no acumula
-  nada.
+La app lee:
 
-## Entradas de señal admitidas
+```text
+results/cinc17/robustness_cnn/robustness_metrics.json
+```
+
+---
+
+## Formatos de entrada admitidos
 
 | Formato | Detalle |
 |---|---|
-| **CSV (fila)** | `300,12.0,12.1,...` — primera celda de la primera fila numérica = frecuencia (Hz). Recomendado. |
-| **CSV (columna)** | una muestra por fila; asume 300 Hz si no hay frecuencia en el encabezado. |
-| **`.mat`** | señal `1×N` (u `N×1`), como `load_ecg`. |
-| **`.dat`** | PhysioNet binario formato 212, una derivación. |
-| **`.npy`** | array 1-D. |
+| CSV fila | `300,12.0,12.1,...`; primer valor = frecuencia de muestreo. |
+| CSV columna | una muestra por fila; si no hay frecuencia, asume 300 Hz. |
+| `.mat` | lee la variable `val` si existe; preserva múltiples derivaciones. |
+| `.dat` | PhysioNet formato 212. |
+| `.npy` | array 1-D o 2-D. |
 
-> **Resampling automático:** el modelo se entrenó a **300 Hz**. Si subes una
-> señal a otra frecuencia (CASO FRECUENTE con datos propios), la app la
-> **re-muestrea a 300 Hz** con `scipy.signal.resample` y lo avisa en pantalla
-> ("Señal re-muestreada de X→300 Hz"). Sin esto, el modelo interpretaría los
-> latidos a la velocidad equivocada y las predicciones serían ruido.
+Si el archivo tiene varias derivaciones, la app pide elegir una antes de inferir.
 
-## Funcionalidades de la interfaz
+---
 
-- **Gráfico interactivo (Plotly)**: zoom/pan, tooltip por intervalo (clase +
-  probabilidad + tiempo). El JS de Plotly está **embebido localmente**, por lo
-  que funciona sin conexión/CDN.
-- **Pestañas**: *Visualización* (gráfico), *Informe* (imprimible a PDF) y
-  *Detalle técnico*. Permite ver el ECG completo sin saturar la pantalla.
-- **Modo claro / oscuro** (toggle 🌓, se recuerda en el navegador).
-- **Bilingüe** ES/EN (toggle en la cabecera).
-- **Resultado en lenguaje natural**: tarjeta de diagnóstico destacada + un
-  **semáforo por clase** (predominante / presente / bajo) — pensado para personal
-  sanitario.
-- **Validación**: checkbox "confirmo que es un ECG de una sola derivación" antes
-  de analizar.
-- **Informe imprimible**: paciente/edad/fecha, ritmo predominante, distribución y
-  el trazado del ECG (botón "Descargar informe (PDF)").
-- **Botón "Usar señal de prueba"** (sin subir nada) y **drag-and-drop**.
-- **Selector de checkpoint automático**: el servidor elige el mejor modelo
-  (menor `val_loss`) al arrancar; no hay que elegir nada en la interfaz.
-- **Comparar con etiqueta real** (opcional, campo "Diagnóstico conocido").
-- **Métricas del modelo** y **re-muestreo automático** a 300 Hz con aviso.
+## Re-muestreo automático
 
-## Generar un CSV de ejemplo
+El modelo se entrena con CinC2017 a **300 Hz**. Si subes una señal a otra frecuencia, la app la re-muestrea automáticamente a 300 Hz con `scipy.signal.resample` y lo indica en pantalla.
+
+Esto evita que el modelo interprete los latidos con una escala temporal incorrecta.
+
+---
+
+## Informe PDF
+
+El botón **Descargar informe (PDF)** genera un PDF real en servidor mediante ReportLab.
+
+Incluye:
+
+- paciente y edad, si se ingresan;
+- fecha;
+- ritmo predominante;
+- confianza;
+- etiqueta real y coincidencia, si está disponible;
+- parámetros del registro;
+- distribución de clases;
+- imagen del ECG con predicción por tramos.
+
+Los archivos subidos se guardan con nombre temporal y se eliminan al terminar la predicción.
+
+---
+
+## Ejecutar en producción
+
+El servidor de desarrollo de Flask no debe usarse en producción. Usa WSGI.
+
+### Linux/macOS/servidor con gunicorn
 
 ```bash
-python webapp/make_sample_csv.py            # escribe webapp/static/example.csv
+pip install gunicorn
+
+export ECG_SAVED="saved/cinc17_resnet"
+export ECG_REFERENCE="dataset2017/REFERENCE-v3.csv"
+# o usa un checkpoint exacto:
+# export ECG_MODEL="saved/cinc17_resnet/<timestamp>/<checkpoint>.pt"
+
+gunicorn -w 2 -b 0.0.0.0:5000 --timeout 120 "webapp.wsgi:app"
 ```
 
-## Expresar señales desde un `.mat`
+### Windows con waitress
 
-```python
-import scipy.io as sio, numpy as np
-sig = sio.loadmat('rec.mat')['val'].squeeze().astype(float)
-np.savetxt('rec.csv', np.column_stack([np.r_[300.0, sig]]), delimiter=',')
+PowerShell:
+
+```powershell
+$env:ECG_SAVED = "saved/cinc17_resnet"
+$env:ECG_REFERENCE = "dataset2017/REFERENCE-v3.csv"
+waitress-serve --listen=*:5000 "webapp.wsgi:app"
 ```
 
-La app trunca la señal al múltiplo de 256 más cercano (igual que el pipeline de
-entrenamiento) antes de inferir.
+`webapp/wsgi.py` lee:
 
-## Estructura
+| Variable | Descripción |
+|---|---|
+| `ECG_SAVED` | Carpeta de checkpoints. |
+| `ECG_MODEL` | Checkpoint exacto; tiene prioridad sobre `ECG_SAVED`. |
+| `ECG_REFERENCE` | Ruta opcional a `REFERENCE-v3.csv`. |
 
+---
+
+## Acceso desde otra máquina
+
+Para acceso en red local:
+
+```bash
+python webapp/app.py \
+  --saved saved/cinc17_resnet \
+  --reference dataset2017/REFERENCE-v3.csv \
+  --host 0.0.0.0 \
+  --port 5000
 ```
-webapp/
-├── app.py              # rutas Flask + cabeceras de seguridad (add_security_headers)
-├── prediction.py       # PredictionService + resampling + parser CSV + rend. PNG/Plotly
-├── make_sample_csv.py  # genera un CSV de ejemplo
-├── wsgi.py             # entrada WSGI para gunicorn/waitress (lee ECG_MODEL/ECG_SAVED)
-├── run_https.sh        # sirve por HTTPS con certificado (autofirmado o propio)
-├── run_public.sh       # expone la app a internet con un túnel HTTPS (cloudflared/ngrok)
-├── templates/index.html
-└── static/
-    ├── style.css
-    ├── app.js
-    └── plotly.min.js   # Plotly embebido (sin CDN)
+
+Luego abre desde otro dispositivo:
+
+```text
+http://<IP-de-tu-PC>:5000/
 ```
+
+Recuerda permitir el puerto en el firewall.
+
+Para una demo por internet sin configurar servidor público, puedes usar túnel HTTPS:
+
+```bash
+./webapp/run_public.sh
+```
+
+---
+
+## HTTPS y seguridad
+
+La app aplica cabeceras de seguridad desde `app.py`:
+
+- `Content-Security-Policy`
+- `X-Frame-Options: DENY`
+- `X-Content-Type-Options: nosniff`
+- `Referrer-Policy`
+- `Permissions-Policy`
+- `Cache-Control: no-store`
+- `Strict-Transport-Security` solo cuando se sirve por HTTPS.
+
+Opciones de HTTPS:
+
+```bash
+./webapp/run_https.sh
+```
+
+O usa nginx/caddy/Render/Heroku/Railway delante del WSGI.
+
+> Privacidad: no subas ECG reales ni datos personales a una demo pública sin las autorizaciones correspondientes.
+
+---
 
 ## Endpoints
 
 | Ruta | Método | Descripción |
-|---|---|---|
+|---|---:|---|
 | `/` | GET | Interfaz principal. |
-| `/predict` | POST | Sube una señal (multipart, campo `file`), opcional `label`; devuelve resultados + plot. |
-| `/example` | POST | Genera y clasifica una señal sintética (sin subir archivo). |
-| `/models` | GET | Lista los checkpoints disponibles y el actual. |
-| `/use_model` | POST | Cambia el checkpoint activo sin reiniciar (JSON `{model: "<rel>"}`). |
+| `/predict` | POST | Clasifica una señal subida por multipart, campo `file`; opcional `label` y `channel`. |
+| `/example` | POST | Genera y clasifica señal sintética: `normal`, `af` o `noise`. |
+| `/report.pdf` | POST | Genera PDF desde el análisis actual. |
+| `/models` | GET | Lista checkpoints disponibles y checkpoint activo. |
+| `/use_model` | POST | Cambia checkpoint activo sin reiniciar; JSON `{ "model": "ruta_relativa.pt" }`. |
+| `/metrics` | GET | Devuelve `webapp/static/metrics/metrics.json` si existe. |
+| `/experiments` | GET | Devuelve comparación ResNet/CNN y robustez si existen en `results/cinc17/`. |
+| `/reference` | GET | Estado de `REFERENCE-v3.csv`; permite consultar `?record=A00004`. |
 
-## Rendimiento / VRAM
+Ejemplos:
 
-La inferencia es una única pasada por el modelo (batch 1), por lo que consume
-muy poca VRAM incluso con un checkpoint grande; en una RTX 3050 (4 GB) no
-debería haber problema. `PredictionService` usa CUDA si está disponible y CPU en
-caso contrario.
+```text
+http://127.0.0.1:5000/metrics
+http://127.0.0.1:5000/experiments
+http://127.0.0.1:5000/reference?record=A00004
+```
+
+---
+
+## Estructura
+
+```text
+webapp/
+├── app.py              # Flask, rutas, seguridad, carga de métricas/experimentos/reference
+├── prediction.py       # PredictionService, resampling, lectura de señales y gráficos
+├── report_pdf.py       # generación del informe PDF
+├── make_sample_csv.py  # genera CSV sintético de ejemplo
+├── wsgi.py             # entrada WSGI; lee ECG_SAVED, ECG_MODEL, ECG_REFERENCE
+├── run_https.sh        # demo HTTPS con certificado autofirmado o propio
+├── run_public.sh       # túnel HTTPS para demo pública
+├── templates/
+│   └── index.html
+└── static/
+    ├── app.js
+    ├── style.css
+    ├── plotly.min.js
+    └── metrics/        # metrics.json + figuras de evaluate.py, si se generan
+```
+
+---
+
+## Notas para GitHub
+
+- No incluyas checkpoints grandes si exceden las políticas del repositorio; considera Git LFS o publicar un release.
+- No incluyas el dataset completo de CinC2017 si la licencia/acuerdo de PhysioNet no lo permite.
+- Para reproducibilidad, sube scripts, configuraciones y reportes CSV/JSON/Markdown generados en `results/`, si el tamaño es razonable.
