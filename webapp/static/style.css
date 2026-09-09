@@ -301,6 +301,12 @@ button:disabled { opacity: .55; cursor: not-allowed; transform: none; filter: no
 .metrics-grid img { max-width: 100%; border-radius: 6px; height: auto; }
 .metrics-grid figcaption { text-align: center; font-size: .82rem; color: var(--muted); margin-top: .4rem; }
 
+/* ---------- Tablas de experimentos ---------- */
+.exp-subtitle { margin: .9rem 0 .45rem; font-size: .95rem; color: var(--ink-soft); }
+.exp-scroll { max-height: none; margin-bottom: .8rem; }
+.exp-table { min-width: 760px; }
+.exp-table code { white-space: nowrap; }
+
 /* ============================================================
    PIE DE PÁGINA (compacto)
    ============================================================ */
@@ -324,7 +330,7 @@ button:disabled { opacity: .55; cursor: not-allowed; transform: none; filter: no
   .layout { display: block; }
   .main { padding: 0; }
   .panel { border: none; border-radius: 0; box-shadow: none; padding: 0; }
-  #sec-upload, #sec-vis, #sec-det { display: none !important; }
+  #sec-upload, #sec-vis, #sec-det, #sec-exp { display: none !important; }
   #sec-rep { display: block !important; }
   .report { border: none; padding: 0; }
   .report img { width: 100%; border: none; }

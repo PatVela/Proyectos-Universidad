@@ -173,6 +173,47 @@ class _ResNet_Layers(nn.Module):
         return x
 
 
+class _PlainCNN_Layers(nn.Module):
+    """Conventional CNN matched to the ResNet convolutional schedule.
+
+    This is the ablation used when ``is_regular_conv=True``. It keeps the same
+    initial convolution, number of convolutional layers, filter length, temporal
+    subsampling pattern, dropout placement and channel-growth schedule as the
+    residual model, but removes the shortcut/maxpool additions. Therefore the
+    ResNet-vs-CNN experiment isolates the contribution of residual connections
+    much better than a shallow plain stack would.
+    """
+
+    def __init__(self, chunk_length, filter_length, num_filters_start, subsample_lengths,
+                 num_skip, dropout, seed=0):
+        super().__init__()
+        self.conv0 = _ConvBlock(1, num_filters_start, filter_length, 1, 0, seed=seed)
+        blocks = []
+        in_filters = num_filters_start
+        for index, subsample in enumerate(subsample_lengths):
+            out_filters = _num_filters_at(index, num_filters_start)
+            layers = []
+            for i in range(num_skip):
+                # Match the pre-activation pattern used inside the residual
+                # branch. The only removed operation is shortcut + addition.
+                if not (index == 0 and i == 0):
+                    layers.append(_BNRelu(in_filters, dropout if i > 0 else 0))
+                layers.append(
+                    _ConvSame1d(in_filters, out_filters, filter_length,
+                                subsample if i == 0 else 1,
+                                seed=seed + index * max(num_skip, 1) + i))
+                in_filters = out_filters
+            blocks.append(nn.Sequential(*layers))
+        self.blocks = nn.Sequential(*blocks)
+        self.final_bnrelu = _BNRelu(in_filters, 0)
+
+    def forward(self, x):
+        x = self.conv0(x)
+        x = self.blocks(x)
+        x = self.final_bnrelu(x)
+        return x
+
+
 def _num_filters_at(index, num_start_filters):
     """Port of get_num_filters_at_index(): doubles every `increase_channels_at` (4)."""
     return int(2 ** (index // 4)) * num_start_filters
@@ -210,33 +251,24 @@ class ECGNetwork(nn.Module):
         self.is_regular_conv = is_regular_conv
 
         if self.is_regular_conv:
-            # Optional: plain stack of convs (conv_subsample_lengths provided).
-            subs = self.conv_subsample_lengths
-            self.convs = nn.Sequential()
-            in_f = 1
-            for subsample in subs:
-                self.convs.append(
-                    _ConvBlock(in_f, conv_num_filters_start, conv_filter_length,
-                               subsample, conv_dropout))
-                in_f = conv_num_filters_start
+            self.cnn = _PlainCNN_Layers(
+                0, conv_filter_length, conv_num_filters_start,
+                self.conv_subsample_lengths, conv_num_skip, conv_dropout, seed=seed)
         else:
             self.resnet = _ResNet_Layers(
                 0, conv_filter_length, conv_num_filters_start,
                 self.conv_subsample_lengths, conv_num_skip, conv_dropout, seed=seed)
 
         # number of channels at the final layer
-        if self.is_regular_conv:
-            final_channels = conv_num_filters_start
-        else:
-            final_channels = _num_filters_at(len(self.conv_subsample_lengths) - 1,
-                                             conv_num_filters_start)
+        final_channels = _num_filters_at(len(self.conv_subsample_lengths) - 1,
+                                         conv_num_filters_start)
 
         self.final_reshape = nn.Identity()
         self.output = _OutputLayer(final_channels, num_categories)
 
     def forward(self, x):
         if self.is_regular_conv:
-            h = self.convs(x)
+            h = self.cnn(x)
         else:
             h = self.resnet(x)
         probs = self.output(h)
@@ -245,7 +277,7 @@ class ECGNetwork(nn.Module):
     def logits(self, x):
         """Softmax-free output, for numerically stable training."""
         if self.is_regular_conv:
-            h = self.convs(x)
+            h = self.cnn(x)
         else:
             h = self.resnet(x)
         h = h.transpose(1, 2)

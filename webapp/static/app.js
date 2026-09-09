@@ -11,6 +11,7 @@ const I18N = {
     "nav.upload": "Cargar ECG",
     "nav.vis": "Resultado",
     "nav.detail": "Detalle Técnico",
+    "nav.experiments": "Experimentos",
     "step1.title": "Cargar electrocardiograma",
     "step1.intro": "Sube un ECG de una sola derivación o un ejemplo preconfigurado. El análisis inicia solo al pulsar «Analizar ECG».",
     "step1.drop": "Arrastra el archivo aquí",
@@ -67,6 +68,7 @@ const I18N = {
     "nav.upload": "Upload ECG",
     "nav.vis": "Result",
     "nav.detail": "Technical detail",
+    "nav.experiments": "Experiments",
     "step1.title": "Upload electrocardiogram",
     "step1.intro": "Upload a single-lead ECG recording or a preset example. Analysis only starts when you press “Analyze ECG”.",
     "step1.drop": "Drag the file here",
@@ -201,7 +203,7 @@ function updateThemeIcon() {
 // ============================================================ sidebar nav =
 function goTo(sec) {
   document.querySelectorAll(".nav-link").forEach(b => b.classList.toggle("active", b.dataset.sec === sec));
-  ["upload", "vis", "det"].forEach(s => { const el = $("sec-" + s); if (el) el.hidden = (s !== sec); });
+  ["upload", "vis", "det", "exp"].forEach(s => { const el = $("sec-" + s); if (el) el.hidden = (s !== sec); });
   // When Resultado becomes visible, make sure the ECG fills the real width.
   if (sec === "vis" && lastResult && typeof Plotly !== "undefined") {
     requestAnimationFrame(() => { try { Plotly.Plots.resize(plotDiv); } catch (e) {} });
@@ -354,7 +356,8 @@ function renderSummary(data) {
     const info = cInfo(s.label);
     summaryBox.innerHTML += `<span class="chip" style="background:${cColor(s.label)}" title="${info.desc} — ${s.count} ${LANG==="es"?"intervalos":"intervals"}">${info.name} · ${s.pct}%</span>`;
   });
-  summaryBox.innerHTML += `<p class="hint muted summary-hint">${LANG==="es"?"Cada color corresponde a un tramo de la señal.":"Each color matches a segment."}</p>`;
+  const modelUsed = (data.info && data.info.model_type) ? data.info.model_type : "—";
+  summaryBox.innerHTML += `<p class="hint muted summary-hint">${LANG==="es"?"Cada color corresponde a un tramo de la señal.":"Each color matches a segment."}<br>${LANG==="es"?"Modelo usado para este resultado":"Model used for this result"}: <strong>${escapeHtml(modelUsed)}</strong></p>`;
 }
 function renderGroundTruth(data) {
   gtBox.innerHTML = "";

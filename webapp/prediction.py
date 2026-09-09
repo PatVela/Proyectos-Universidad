@@ -91,6 +91,9 @@ class PredictionService:
         self.model = network.build_network(num_categories=num_cat, **config)
         self.model.load_state_dict(ckpt['model_state_dict'])
         self.model.to(self.device).eval()
+        self.model_type = ckpt.get('model_type') or (
+            'CNN convencional' if config.get('is_regular_conv') else 'ResNet-34')
+        self.num_parameters = ckpt.get('num_parameters') or util.count_parameters(self.model)
 
         # exposed training-time metrics (val_loss / val_acc were saved at each
         # checkpoint). Full dev metrics are available via examples/cinc17/evaluate.py
@@ -112,6 +115,9 @@ class PredictionService:
     def info(self):
         return {
             'model_path': self.model_path,
+            'model_type': self.model_type,
+            'is_regular_conv': bool(self.config.get('is_regular_conv', False)),
+            'num_parameters': self.num_parameters,
             'classes': list(self.classes),
             'device': str(self.device),
             'train_fs': TRAIN_FS,

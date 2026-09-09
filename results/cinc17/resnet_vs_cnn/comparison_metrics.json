@@ -1,0 +1,256 @@
+{
+  "data_json": "C:\\Users\\juerg\\Investigacion\\TIF-Biomedica\\examples\\cinc17\\dev.json",
+  "notes": "Comparación a nivel de registro usando el mismo dataset, split, preprocesamiento, entrenamiento y métricas. Challenge-F1 = promedio F1 en N/A/O.",
+  "models": {
+    "ResNet-34": {
+      "info": {
+        "model_path": "C:\\Users\\juerg\\Investigacion\\TIF-Biomedica\\saved\\cinc17_resnet\\1788946337-545\\0.353-0.868-019-0.234-0.922.pt",
+        "model_type": "ResNet-34",
+        "is_regular_conv": false,
+        "num_parameters": {
+          "total": 10462276,
+          "trainable": 10462276,
+          "non_trainable": 0
+        },
+        "training_seconds": 3805.180695772171,
+        "training_minutes": 63.41967826286952,
+        "best_epoch": 19,
+        "config": {
+          "conv_subsample_lengths": [
+            1,
+            2,
+            1,
+            2,
+            1,
+            2,
+            1,
+            2,
+            1,
+            2,
+            1,
+            2,
+            1,
+            2,
+            1,
+            2
+          ],
+          "conv_filter_length": 16,
+          "conv_num_filters_start": 32,
+          "conv_init": "he_normal",
+          "conv_activation": "relu",
+          "conv_dropout": 0.2,
+          "conv_num_skip": 2,
+          "conv_increase_channels_at": 4,
+          "learning_rate": 0.001,
+          "batch_size": 32,
+          "train": "examples/cinc17/train.json",
+          "dev": "examples/cinc17/dev.json",
+          "generator": true,
+          "save_dir": "saved",
+          "is_regular_conv": false,
+          "seed": 2018
+        },
+        "training_summary_path": "saved/cinc17_resnet\\1788946337-545\\training_summary.json"
+      },
+      "metrics": {
+        "labels": [
+          "A",
+          "N",
+          "O",
+          "~"
+        ],
+        "accuracy": 0.8689,
+        "macro_f1": 0.7653,
+        "weighted_f1": 0.8651,
+        "challenge_f1": 0.8498,
+        "n": 854,
+        "per_class": {
+          "A": {
+            "precision": 0.8592,
+            "recall": 0.8026,
+            "f1": 0.8299,
+            "tp": 61,
+            "n_true": 76,
+            "n_pred": 71
+          },
+          "N": {
+            "precision": 0.9021,
+            "recall": 0.9429,
+            "f1": 0.922,
+            "tp": 479,
+            "n_true": 508,
+            "n_pred": 531
+          },
+          "O": {
+            "precision": 0.8059,
+            "recall": 0.7893,
+            "f1": 0.7975,
+            "tp": 191,
+            "n_true": 242,
+            "n_pred": 237
+          },
+          "~": {
+            "precision": 0.7333,
+            "recall": 0.3929,
+            "f1": 0.5116,
+            "tp": 11,
+            "n_true": 28,
+            "n_pred": 15
+          }
+        },
+        "confusion": {
+          "A": {
+            "A": 61,
+            "N": 3,
+            "O": 11,
+            "~": 1
+          },
+          "N": {
+            "A": 0,
+            "N": 479,
+            "O": 28,
+            "~": 1
+          },
+          "O": {
+            "A": 10,
+            "N": 39,
+            "O": 191,
+            "~": 2
+          },
+          "~": {
+            "A": 0,
+            "N": 10,
+            "O": 7,
+            "~": 11
+          }
+        },
+        "mean_majority_confidence": 0.9663
+      }
+    },
+    "CNN convencional": {
+      "info": {
+        "model_path": "C:\\Users\\juerg\\Investigacion\\TIF-Biomedica\\saved\\cinc17_cnn\\1788950621-545\\1.031-0.584-009-0.961-0.598.pt",
+        "model_type": "CNN convencional",
+        "is_regular_conv": true,
+        "num_parameters": {
+          "total": 10462276,
+          "trainable": 10462276,
+          "non_trainable": 0
+        },
+        "training_seconds": 957.0731739997864,
+        "training_minutes": 15.951219566663106,
+        "best_epoch": 9,
+        "config": {
+          "conv_subsample_lengths": [
+            1,
+            2,
+            1,
+            2,
+            1,
+            2,
+            1,
+            2,
+            1,
+            2,
+            1,
+            2,
+            1,
+            2,
+            1,
+            2
+          ],
+          "conv_filter_length": 16,
+          "conv_num_filters_start": 32,
+          "conv_init": "he_normal",
+          "conv_activation": "relu",
+          "conv_dropout": 0.2,
+          "conv_num_skip": 2,
+          "conv_increase_channels_at": 4,
+          "learning_rate": 0.001,
+          "batch_size": 32,
+          "train": "examples/cinc17/train.json",
+          "dev": "examples/cinc17/dev.json",
+          "generator": true,
+          "save_dir": "saved",
+          "is_regular_conv": true,
+          "seed": 2018
+        },
+        "training_summary_path": "saved/cinc17_cnn\\1788950621-545\\training_summary.json"
+      },
+      "metrics": {
+        "labels": [
+          "A",
+          "N",
+          "O",
+          "~"
+        ],
+        "accuracy": 0.5937,
+        "macro_f1": 0.1882,
+        "weighted_f1": 0.4453,
+        "challenge_f1": 0.2509,
+        "n": 854,
+        "per_class": {
+          "A": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "n_true": 76,
+            "n_pred": 0
+          },
+          "N": {
+            "precision": 0.5946,
+            "recall": 0.9961,
+            "f1": 0.7447,
+            "tp": 506,
+            "n_true": 508,
+            "n_pred": 851
+          },
+          "O": {
+            "precision": 0.3333,
+            "recall": 0.0041,
+            "f1": 0.0082,
+            "tp": 1,
+            "n_true": 242,
+            "n_pred": 3
+          },
+          "~": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tp": 0,
+            "n_true": 28,
+            "n_pred": 0
+          }
+        },
+        "confusion": {
+          "A": {
+            "A": 0,
+            "N": 76,
+            "O": 0,
+            "~": 0
+          },
+          "N": {
+            "A": 0,
+            "N": 506,
+            "O": 2,
+            "~": 0
+          },
+          "O": {
+            "A": 0,
+            "N": 241,
+            "O": 1,
+            "~": 0
+          },
+          "~": {
+            "A": 0,
+            "N": 28,
+            "O": 0,
+            "~": 0
+          }
+        },
+        "mean_majority_confidence": 0.9944
+      }
+    }
+  }
+}

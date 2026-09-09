@@ -50,6 +50,9 @@
       <button type="button" class="nav-link" data-sec="det">
         <svg class="ico"><use href="#i-detail"/></svg><span data-i18n="nav.detail">Detalle Técnico</span>
       </button>
+      <button type="button" class="nav-link" data-sec="exp">
+        <svg class="ico"><use href="#i-viz"/></svg><span data-i18n="nav.experiments">Experimentos</span>
+      </button>
     </nav>
 
     <div class="side-foot">
@@ -198,9 +201,11 @@
         <div class="method" data-i18n="methodology"></div>
 
         <h3 class="sec-title"><span class="sec-tag" data-i18n="det.model">Ficha técnica del modelo</span></h3>
+        {% set cfg = model_info.config if model_info and model_info.config else {} %}
+        {% set is_cnn = cfg.get('is_regular_conv', False) %}
         <table class="model-table">
           <tbody>
-            <tr><th data-i18n="det.arch">Arquitectura</th><td>CNN profunda (Hannun et al., Nature Medicine 2019) · 34 capas residuales · {{ model_n_params if model_n_params is not none else '—' }} parámetros</td></tr>
+            <tr><th data-i18n="det.arch">Arquitectura</th><td>{% if is_cnn %}CNN convencional equivalente · sin conexiones residuales{% else %}ResNet-34 de la réplica · 16 bloques residuales{% endif %} · {{ model_n_params if model_n_params is not none else '—' }} parámetros</td></tr>
             <tr><th data-i18n="det.dataset">Conjunto de datos</th><td>PhysioNet CinC2017 · ECG de una sola derivación · {{ model_info.train_fs if model_info else '300' }} Hz · segmentos de {{ model_info.step if model_info else '256' }} muestras</td></tr>
             <tr><th data-i18n="det.classes">Ritmos reconocidos</th><td>{{ (model_info.classes) if model_info else '—' }}</td></tr>
             <tr><th data-i18n="det.val">Fe del entrenamiento (val)</th><td>
@@ -278,6 +283,115 @@
       </div>
     </section>
 
+    <!-- ======== EXPERIMENTOS ======== -->
+    <section class="panel" id="sec-exp" hidden>
+      <div class="panel-head">
+        <h1 data-i18n="nav.experiments">Experimentos</h1>
+        <p class="panel-sub">Resultados reproducibles de la comparación arquitectónica y del análisis de robustez. Las tablas se completan automáticamente cuando existen los archivos en <code>results/cinc17/</code>.</p>
+      </div>
+
+      <div class="method">
+        Objetivo experimental: mantener el mismo problema de CinC2017 y evaluar dos preguntas: <strong>1)</strong> si las conexiones residuales mejoran frente a una CNN convencional equivalente, y <strong>2)</strong> qué tan sensible es el modelo ante degradaciones controladas de la señal ECG.
+      </div>
+
+      <!-- ===== Experimento 2: ResNet vs CNN ===== -->
+      <h3 class="sec-title"><span class="sec-tag">Experimento 2 · ResNet-34 vs CNN convencional</span></h3>
+      {% if experiments and experiments.comparison %}
+      <p class="hint muted">Dataset: <code>{{ experiments.comparison.data_json }}</code></p>
+      <div class="iv-scroll exp-scroll">
+        <table class="iv-table exp-table">
+          <thead>
+            <tr>
+              <th>Modelo</th><th>Arquitectura</th><th>Parámetros</th><th>Tiempo</th>
+              <th>Accuracy</th><th>Macro-F1</th><th>Weighted-F1</th><th>Challenge-F1</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for name, item in experiments.comparison.models.items() %}
+            {% set info = item.info %}
+            {% set met = item.metrics %}
+            <tr>
+              <td><strong>{{ name }}</strong></td>
+              <td>{{ info.model_type }}</td>
+              <td>{{ '{:,}'.format(info.num_parameters.total).replace(',', ' ') if info.num_parameters else '—' }}</td>
+              <td>{% if info.training_minutes is not none %}{{ '%.2f' % info.training_minutes }} min{% else %}—{% endif %}</td>
+              <td>{{ '%.3f' % met.accuracy }}</td>
+              <td>{{ '%.3f' % met.macro_f1 }}</td>
+              <td>{{ '%.3f' % met.weighted_f1 }}</td>
+              <td><strong>{{ '%.3f' % met.challenge_f1 }}</strong></td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <h4 class="exp-subtitle">F1 por clase</h4>
+      <div class="iv-scroll exp-scroll">
+        <table class="iv-table exp-table">
+          <thead><tr><th>Modelo</th><th>Clase</th><th>Precisión</th><th>Recall</th><th>F1</th><th>n real</th><th>n pred</th></tr></thead>
+          <tbody>
+          {% for name, item in experiments.comparison.models.items() %}
+            {% for c, pc in item.metrics.per_class.items() %}
+            <tr>
+              <td>{{ name }}</td>
+              <td><code>{{ c }}</code></td>
+              <td>{{ '%.3f' % pc.precision }}</td>
+              <td>{{ '%.3f' % pc.recall }}</td>
+              <td><strong>{{ '%.3f' % pc.f1 }}</strong></td>
+              <td>{{ pc.n_true }}</td>
+              <td>{{ pc.n_pred }}</td>
+            </tr>
+            {% endfor %}
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="help-box">
+        <strong>Resultado pendiente.</strong>
+        <p>Entrena ambos modelos y ejecuta la comparación para que esta tabla aparezca aquí:</p>
+        <p><code>python -m ecg.train examples/cinc17/config.json -e cinc17_resnet --seed 2018</code></p>
+        <p><code>python -m ecg.train examples/cinc17/config_regular_cnn.json -e cinc17_cnn --seed 2018</code></p>
+        <p><code>python examples/cinc17/compare_models.py --data_json examples/cinc17/dev.json --resnet_saved saved/cinc17_resnet --cnn_saved saved/cinc17_cnn --out_dir results/cinc17/resnet_vs_cnn</code></p>
+      </div>
+      {% endif %}
+
+      <!-- ===== Experimento 3: Robustez ===== -->
+      <h3 class="sec-title"><span class="sec-tag">Experimento 3 · Robustez frente a perturbaciones ECG</span></h3>
+      {% if experiments and experiments.robustness %}
+        {% for model_name, rob in experiments.robustness.items() %}
+        <h4 class="exp-subtitle">{{ model_name }}</h4>
+        <p class="hint muted">Checkpoint: <code>{{ rob.model.model_path }}</code> · semilla {{ rob.seed }}</p>
+        <div class="iv-scroll exp-scroll">
+          <table class="iv-table exp-table">
+            <thead><tr><th>Condición</th><th>Descripción</th><th>Accuracy</th><th>Macro-F1</th><th>Weighted-F1</th><th>Challenge-F1</th><th>n</th></tr></thead>
+            <tbody>
+            {% for row in rob.conditions %}
+              <tr>
+                <td><code>{{ row.condition }}</code></td>
+                <td>{{ row.description }}</td>
+                <td>{{ '%.3f' % row.accuracy }}</td>
+                <td>{{ '%.3f' % row.macro_f1 }}</td>
+                <td>{{ '%.3f' % row.weighted_f1 }}</td>
+                <td><strong>{{ '%.3f' % row.challenge_f1 }}</strong></td>
+                <td>{{ row.n }}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% endfor %}
+      {% else %}
+      <div class="help-box">
+        <strong>Resultado pendiente.</strong>
+        <p>Cuando exista al menos un análisis de robustez en <code>results/cinc17/robustness_resnet/robustness_metrics.json</code> o <code>results/cinc17/robustness_cnn/robustness_metrics.json</code>, la app lo mostrará automáticamente.</p>
+        <p><code>python examples/cinc17/robustness.py --data_json examples/cinc17/dev.json --saved saved/cinc17_resnet --out_dir results/cinc17/robustness_resnet --seed 1234</code></p>
+      </div>
+      {% endif %}
+
+      <p class="hint muted">Nota: si se usa <code>dev.json</code>, aclara en el informe que también pudo participar en la selección del checkpoint. Para evaluación final imparcial, usa un <code>test.json</code> separado.</p>
+    </section>
+
     <!-- ======== PIE COMPACTO ======== -->
     <footer class="site-footer">
       <div class="footer-row">
@@ -303,5 +417,5 @@
 
 <script src="{{ url_for('static', filename='plotly.min.js') }}"></script>
 <script src="{{ url_for('static', filename='app.js') }}"></script>
-</body>
+<script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a385bff899a1950c',t:'MTc4ODk1MjI2Mg=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>

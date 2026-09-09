@@ -309,6 +309,41 @@ Reporte por clase (nivel registro, `n = 854`):
 
 > El nivel intervalo es **solo un diagnóstico interno**: CinC 2017 carece de etiquetas reales por intervalo, por lo que el artículo reporta únicamente métrica a nivel de registro.
 
+## Experimentos adicionales propuestos
+
+Además de la réplica base, el repositorio deja preparados dos experimentos para fortalecer el trabajo sin cambiar el alcance de CinC2017. La metodología completa está en `docs/experimentos_cinc2017.md`.
+
+### Experimento 2 · ResNet-34 vs CNN convencional
+
+`examples/cinc17/config.json` entrena la ResNet-34 de la réplica. `examples/cinc17/config_regular_cnn.json` activa `is_regular_conv=true` y construye una CNN convencional emparejada: misma profundidad, filtros, submuestreo, dropout y crecimiento de canales, pero **sin conexiones residuales**.
+
+```bash
+python -m ecg.train examples/cinc17/config.json -e cinc17_resnet --seed 2018
+python -m ecg.train examples/cinc17/config_regular_cnn.json -e cinc17_cnn --seed 2018
+
+python examples/cinc17/compare_models.py \
+  --data_json examples/cinc17/dev.json \
+  --resnet_saved saved/cinc17_resnet \
+  --cnn_saved saved/cinc17_cnn \
+  --out_dir results/cinc17/resnet_vs_cnn
+```
+
+El script genera `summary.csv`, `per_class_metrics.csv`, `comparison_metrics.json` y `comparison_report.md` con Accuracy, Macro-F1, Weighted-F1, F1 por clase, Challenge-F1, parámetros y tiempo de entrenamiento. La app Flask los muestra automáticamente en la pestaña **Experimentos** cuando existe `results/cinc17/resnet_vs_cnn/comparison_metrics.json`.
+
+### Experimento 3 · Robustez frente a perturbaciones ECG
+
+`examples/cinc17/robustness.py` toma el conjunto de evaluación y aplica perturbaciones reproducibles: ruido con SNR controlado, deriva de línea base, escalamiento de amplitud y recortes de duración.
+
+```bash
+python examples/cinc17/robustness.py \
+  --data_json examples/cinc17/dev.json \
+  --saved saved/cinc17_resnet \
+  --out_dir results/cinc17/robustness_resnet \
+  --seed 1234
+```
+
+Las salidas (`robustness_summary.csv`, `robustness_per_class.csv`, `robustness_metrics.json`, `robustness_report.md` y opcionalmente `robustness_curves.png`) permiten construir una tabla del tipo: condición vs Accuracy, Macro-F1 y Challenge-F1. La app Flask los muestra automáticamente en **Experimentos** cuando existen `results/cinc17/robustness_resnet/robustness_metrics.json` o `results/cinc17/robustness_cnn/robustness_metrics.json`.
+
 ## Trabajo futuro
 
 - Evaluación sobre el **test set oficial** de PhysioNet (una vez liberado y descargado) para obtener una métrica comparable al 0.83 sin *leakage*.

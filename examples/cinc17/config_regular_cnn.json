@@ -30,6 +30,6 @@
     "dev": "examples/cinc17/dev.json",
     "generator": true,
     "save_dir": "saved",
-    "is_regular_conv": false,
+    "is_regular_conv": true,
     "seed": 2018
 }

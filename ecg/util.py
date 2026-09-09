@@ -46,3 +46,14 @@ def list_checkpoints(models_dir):
                for f in fs if f.endswith('.pt')]
     ptfiles.sort(key=_best_key)
     return ptfiles
+
+
+def count_parameters(model):
+    """Return total/trainable/non-trainable parameter counts for a torch model."""
+    total = sum(p.numel() for p in model.parameters())
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    return {
+        'total': int(total),
+        'trainable': int(trainable),
+        'non_trainable': int(total - trainable),
+    }

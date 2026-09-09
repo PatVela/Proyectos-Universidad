@@ -11,6 +11,7 @@ mirroring the original where you run from the repo root.
 from __future__ import print_function, division, absolute_import
 
 import argparse
+import csv
 import json
 import numpy as np
 import os
@@ -49,6 +50,50 @@ def _get_device():
 
 def _to_device(device, *tensors):
     return [t.to(device) for t in tensors]
+
+
+def set_seed(seed):
+    """Set Python/NumPy/PyTorch seeds for reproducible ablations."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def _model_type(params):
+    return "CNN convencional" if params.get('is_regular_conv') else "ResNet-34"
+
+
+def _save_training_artifacts(save_dir, history, params, model_info, best_epoch,
+                             best_val_loss, total_seconds):
+    """Persist per-epoch logs used by the comparison experiment."""
+    os.makedirs(save_dir, exist_ok=True)
+    csv_path = os.path.join(save_dir, 'history.csv')
+    fieldnames = [
+        'epoch', 'train_loss', 'train_acc', 'val_loss', 'val_acc',
+        'epoch_seconds', 'learning_rate', 'checkpoint'
+    ]
+    with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in history:
+            writer.writerow({k: row.get(k) for k in fieldnames})
+
+    summary = {
+        'model_type': model_info['model_type'],
+        'is_regular_conv': bool(params.get('is_regular_conv', False)),
+        'num_parameters': model_info['num_parameters'],
+        'best_epoch': best_epoch,
+        'best_val_loss': best_val_loss,
+        'total_seconds': float(total_seconds),
+        'total_minutes': float(total_seconds) / 60.0,
+        'epochs_completed': len(history),
+        'config': params,
+        'history': history,
+    }
+    with open(os.path.join(save_dir, 'training_summary.json'), 'w', encoding='utf-8') as f:
+        json.dump(summary, f, indent=2, ensure_ascii=False)
 
 
 def make_batch(device, preproc, xb, yb):
@@ -95,6 +140,13 @@ def evaluate(model, loader, num_batches, device, criterion):
 
 
 def train(args, params):
+    seed = args.seed if args.seed is not None else params.get('seed')
+    if seed is not None:
+        seed = int(seed)
+        set_seed(seed)
+        params['seed'] = seed
+        print("Seed:", seed)
+
     device = _get_device()
     print("Device:", device)
 
@@ -116,6 +168,13 @@ def train(args, params):
 
     num_categories = len(preproc.classes)
     model = network.build_network(num_categories=num_categories, **params)
+    param_count = util.count_parameters(model)
+    model_info = {
+        'model_type': _model_type(params),
+        'num_parameters': param_count,
+    }
+    print("Modelo:", model_info['model_type'])
+    print("Parámetros: total={total:,} | entrenables={trainable:,}".format(**param_count))
     model.to(device)
 
     batch_size = int(params.get("batch_size", 32))
@@ -141,10 +200,14 @@ def train(args, params):
 
     print("Starting training.")
     best_val_loss = float('inf')
+    best_epoch = None
     no_improve_es = 0
     no_improve_lr = 0
+    history = []
+    train_start_time = time.time()
 
     for epoch in range(max_epochs):
+        epoch_start_time = time.time()
         train_gen = data_generator(batch_size, preproc, *train, device=device)
         dev_gen = data_generator(batch_size, preproc, *dev, device=device)
 
@@ -175,8 +238,10 @@ def train(args, params):
         train_loss = epoch_loss / max(n, 1)
         train_acc = epoch_acc / max(n, 1)
         val_loss, val_acc = evaluate(model, dev_gen, dev_steps, device, criterion)
-        print("Epoch {:03d} | train loss {:.4f} acc {:.4f} | val loss {:.4f} acc {:.4f}".format(
-            epoch, train_loss, train_acc, val_loss, val_acc))
+        epoch_seconds = time.time() - epoch_start_time
+        total_seconds = time.time() - train_start_time
+        print("Epoch {:03d} | train loss {:.4f} acc {:.4f} | val loss {:.4f} acc {:.4f} | {:.1f}s".format(
+            epoch, train_loss, train_acc, val_loss, val_acc, epoch_seconds))
 
         # ----- checkpoint (saved every epoch, like ModelCheckpoint) -----
         cpath = get_path_for_saving(save_dir, epoch, val_loss, val_acc, train_loss, train_acc)
@@ -188,12 +253,30 @@ def train(args, params):
             'epoch': epoch,
             'val_loss': val_loss,
             'val_acc': val_acc,
+            'model_type': model_info['model_type'],
+            'num_parameters': param_count,
+            'epoch_seconds': epoch_seconds,
+            'training_seconds_so_far': total_seconds,
         }, cpath)
         print("\tSaved:", os.path.basename(cpath))
 
+        current_lr = optimizer.param_groups[0]['lr']
+        history.append({
+            'epoch': int(epoch),
+            'train_loss': round(float(train_loss), 6),
+            'train_acc': round(float(train_acc), 6),
+            'val_loss': round(float(val_loss), 6),
+            'val_acc': round(float(val_acc), 6),
+            'epoch_seconds': round(float(epoch_seconds), 3),
+            'learning_rate': float(current_lr),
+            'checkpoint': os.path.basename(cpath),
+        })
+
         # ----- LR scheduling on plateau (ReduceLROnPlateau) -----
+        stop_early = False
         if val_loss < best_val_loss:
             best_val_loss = val_loss
+            best_epoch = epoch
             no_improve_lr = 0
             no_improve_es = 0
         else:
@@ -206,8 +289,13 @@ def train(args, params):
                     optimizer.param_groups[0]['lr']))
                 no_improve_lr = 0
             if no_improve_es >= patience_es:
-                print("Early stopping at epoch", epoch)
-                break
+                stop_early = True
+
+        _save_training_artifacts(save_dir, history, params, model_info,
+                                 best_epoch, float(best_val_loss), total_seconds)
+        if stop_early:
+            print("Early stopping at epoch", epoch)
+            break
 
     print("Training finished. Best val loss {:.4f}.".format(best_val_loss))
 
@@ -217,6 +305,8 @@ if __name__ == '__main__':
     parser.add_argument("config_file", help="path to config file")
     parser.add_argument("--experiment", "-e", help="experiment tag", default="default")
     parser.add_argument("--epochs", type=int, default=None, help="override max epochs")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="override random seed from config for reproducible ablations")
     args = parser.parse_args()
     params = json.load(open(args.config_file, 'r'))
     train(args, params)
