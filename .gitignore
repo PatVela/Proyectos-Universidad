@@ -1,9 +1,3 @@
-# ============================================================
-#  TIF-Biomedica — ECG PyTorch (replica Hannun et al. 2019)
-#  Commit solo código + configs. NO datos, modelos ni logs.
-# ============================================================
-
-# ---------- Datasets y conjuntos de entrenamiento ----------
 dataset/
 dataset2017/
 dataset2020/
@@ -11,77 +5,22 @@ dataset2020_procesado/
 dataset2020_prueba/
 training2017/
 training2017.zip
-examples/cinc17/data/
-examples/cinc17/synthetic/
-examples/cinc17/train.json
-examples/cinc17/dev.json
-
-# ---------- Resultados, modelos entrenados y salidas ----------
-saved/
-saved_synthetic/
-resultados/
-logs/
-modelos/
-plots/
-/data
-/cache
-
-# ---------- Datos crudos / serializados (pesados, no versionar) ----------
-*.mat
-*.hea
-*.atr
-*.dat
-*.eps
-
-# Modelos guardados y comprimidos
-*.keras
-*.h5
-*.pt
-*.pth
-*.pk
-*.pkl
-
-# ---------- Entornos virtuales ----------
 .vscode/
 ECG-env/
-env/
-venv/
-ENV/
-.python-version
-.env
-.spyderproject
-.ropeproject
-
-# ---------- Python: compilados y cachés ----------
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-build/
-dist/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# ---------- Logs, cobertura y pruebas ----------
-*.log
-coverage.xml
-.coverage
-.coverage.*
-htmlcov/
-.tox/
-.hypothesis/
-
-# ---------- Web app (uploads de ejemplo, no versionar) ----------
+resultados/
+results/
+saved/
+data/
 webapp/uploads/
-webapp/example.csv
-webapp/static/preview.png
-
-# ---------- Jupyter / notebooks ----------
-.ipynb_checkpoints
-
-# ---------- Sistema / editor ----------
-.DS_Store
-Thumbs.db
-*.swp
-.idea/
+webapp/results/
+logs/
+modelos/
+*.zip
+*.keras
+*.h5
+*.mat
+*.hea
+*.eps
+*.atr
+*.dat
+__pycache__/

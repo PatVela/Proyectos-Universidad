@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title data-i18n="app.title">Clasificador de ECG · UNSA</title>
-  <meta name="description" content="Asistente automático de lectura de ECG basado en deep learning (Hannun et al., Nature Medicine 2019).">
+  <title>Clasificador ECG CINC2020-12 · UNSA</title>
+  <meta name="description" content="Asistente académico de lectura multilabel de ECG de 12 derivaciones.">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
@@ -23,7 +23,6 @@
 </svg>
 
 <div class="layout">
-  <!-- ============ BARRA LATERAL ============ -->
   <aside class="sidebar">
     <div class="side-brand">
       <span class="side-logo" aria-hidden="true">
@@ -41,31 +40,24 @@
     </div>
 
     <nav class="side-nav" id="sideNav">
-      <button type="button" class="nav-link active" data-sec="upload">
-        <svg class="ico"><use href="#i-upload"/></svg><span data-i18n="nav.upload">Cargar ECG</span>
-      </button>
-      <button type="button" class="nav-link" data-sec="vis">
-        <svg class="ico"><use href="#i-viz"/></svg><span data-i18n="nav.vis">Resultado</span>
-      </button>
-      <button type="button" class="nav-link" data-sec="det">
-        <svg class="ico"><use href="#i-detail"/></svg><span data-i18n="nav.detail">Detalle Técnico</span>
-      </button>
-      <button type="button" class="nav-link" data-sec="exp">
-        <svg class="ico"><use href="#i-viz"/></svg><span data-i18n="nav.experiments">Experimentos</span>
-      </button>
+      <button type="button" class="nav-link active" data-sec="upload"><svg class="ico"><use href="#i-upload"/></svg><span data-i18n="nav.upload">Cargar ECG</span></button>
+      <button type="button" class="nav-link" data-sec="vis"><svg class="ico"><use href="#i-viz"/></svg><span data-i18n="nav.result">Resultado</span></button>
+      <button type="button" class="nav-link" data-sec="det"><svg class="ico"><use href="#i-detail"/></svg><span data-i18n="nav.detail">Detalle Técnico</span></button>
+      <button type="button" class="nav-link" data-sec="exp"><svg class="ico"><use href="#i-viz"/></svg><span data-i18n="nav.experiments">Experimentos</span></button>
     </nav>
 
     <div class="side-foot">
       <div class="foot-badge" title="{{ model_train_date }}">
-        <span class="dot"></span><span data-i18n="app.ready">Modelo listo</span>
-        <span class="model-name" id="modelName" title="">{{ model_hash }}</span>
+        <span class="dot {{ '' if model_info and model_info.available else 'dot-warn' }}"></span>
+        <span data-i18n="{{ 'model.ready' if model_info and model_info.available else 'model.pending' }}">{{ 'Modelo listo' if model_info and model_info.available else 'Modelo pendiente' }}</span>
+        <span class="model-name" id="modelName" title="{{ resolved_model }}">{{ model_hash or 'auto' }}</span>
       </div>
       <div class="foot-meta">
         <span>{{ project.institucion }}</span>
         <span>{{ project.curso }} · {{ project.anio }} · v{{ project.version }}</span>
       </div>
       <div class="foot-controls">
-        <div class="seg-group" role="group" aria-label="Idioma">
+        <div class="seg-group" role="group" aria-label="Idioma / Language">
           <button type="button" id="langEs" class="seg active">ES</button>
           <button type="button" id="langEn" class="seg">EN</button>
         </div>
@@ -74,100 +66,65 @@
     </div>
   </aside>
 
-  <!-- ============ CONTENIDO PRINCIPAL ============ -->
   <main class="main">
-
-    <!-- ======== CARGAR ======== -->
     <section class="panel upload-panel" id="sec-upload">
       <div class="panel-head">
-        <h1 data-i18n="step1.title">Cargar electrocardiograma</h1>
-        <p class="panel-sub" data-i18n="step1.intro">
-          Sube un ECG de una sola derivación o un ejemplo preconfigurado. El análisis inicia solo al pulsar «Analizar ECG».
-        </p>
+        <h1 data-i18n="upload.title">Cargar electrocardiograma</h1>
+        <p class="panel-sub" data-i18n="upload.intro">Sube un ECG de 12 derivaciones en CSV o el par WFDB .hea + .mat. El análisis se ejecuta solo al pulsar Analizar ECG.</p>
       </div>
 
       <div id="dropzone" class="dropzone">
         <div class="dz-icon"><svg class="ico ico-lg"><use href="#i-upload"/></svg></div>
-        <p class="dz-main" data-i18n="step1.drop">Arrastra el archivo aquí</p>
-        <p class="dz-sub" data-i18n="step1.dropSub">o haz clic para seleccionarlo</p>
-        <input type="file" id="file" name="file" accept=".csv,.mat,.dat,.npy,text/csv">
+        <p class="dz-main" data-i18n="upload.drop">Arrastra el archivo aquí</p>
+        <p class="dz-sub" data-i18n="upload.dropSub">o haz clic para seleccionarlo. Para WFDB selecciona ambos archivos del mismo registro.</p>
+        <input type="file" id="file" name="files" accept=".csv,.hea,.mat,text/csv" multiple>
       </div>
 
       <div id="fileCard" class="file-card" hidden></div>
 
       <p class="hint muted">
-        <span data-i18n="step1.formats">Formatos:</span> <strong>CSV</strong>, <strong>.mat</strong>, <strong>.dat</strong>, <strong>.npy</strong>.
-        <span class="detail-toggle" id="fmtHelp" data-i18n="step1.help">¿Qué formato usar?</span></p>
+        <span data-i18n="upload.formats">Formatos:</span> <strong>CSV 12 derivaciones</strong> o <strong>.hea + .mat</strong>.
+        <span class="detail-toggle" id="fmtHelp" data-i18n="upload.help">¿Qué formato usar?</span>
+      </p>
       <div id="fmtHelpBox" class="help-box" hidden>
-        <p><strong>CSV (recomendado):</strong> <span data-i18n="step1.helpCsv">el primer número de la primera fila es la frecuencia de muestreo (Hz) y el resto son los valores de la señal.</span>
-        <code>300,12.0,12.1,12.3,...</code></p>
-        <p data-i18n="step1.helpOther">Los archivos .mat, .dat y .npy de una sola derivación también se aceptan. Si la señal tiene otra frecuencia, se ajusta automáticamente.</p>
+        <p data-i18n="upload.helpCsv">CSV: columnas de derivaciones estándar I, II, III, aVR, aVL, aVF, V1, V2, V3, V4, V5, V6. Puede iniciar con # Sampling Rate: 500 Hz.</p>
+        <p data-i18n="upload.helpWfdb">WFDB: sube juntos registro.hea y registro.mat. La app leerá el header, preprocesará la señal y generará un CSV convertido descargable.</p>
       </div>
 
       <div class="patient-grid">
-        <label><span data-i18n="step1.name">Paciente (opcional)</span>
-          <input type="text" id="patName" placeholder="Nombre / ID"></label>
-        <label><span data-i18n="step1.age">Edad (opcional)</span>
-          <input type="text" id="patAge" inputmode="numeric" placeholder="—"></label>
-        <label><span class="muted" data-i18n="step1.gt">Diagnóstico conocido (opcional)</span>
-          <input type="text" id="trueLabel" class="label-input" placeholder="Normal, AF, Otro, Ruido"></label>
+        <label><span data-i18n="upload.patient">Paciente / ID (opcional)</span>
+          <input type="text" id="patName" name="patient_name" data-i18n-placeholder="upload.patientPh" placeholder="Nombre o código"></label>
+        <label><span data-i18n="upload.age">Edad (opcional)</span>
+          <input type="text" id="patAge" name="patient_age" inputmode="numeric" placeholder="—"></label>
+        <label><span data-i18n="upload.threshold">Threshold multilabel</span>
+          <input type="number" id="threshold" name="threshold" min="0" max="1" step="0.01" value="0.50"></label>
+        <label><span data-i18n="upload.trueLabels">Etiquetas reales opcionales para CSV</span>
+          <input type="text" id="trueLabels" name="true_labels" data-i18n-placeholder="upload.trueLabelsPh" placeholder="NSR, AF o 426783006,164889003"></label>
       </div>
-      <p class="hint muted reference-hint">
-        {% if reference_count %}
-          REFERENCE-v3.csv cargado: {{ reference_count }} etiquetas reales. Si el archivo subido se llama como el registro oficial, por ejemplo <code>A00001.mat</code>, la app comparará automáticamente predicción vs etiqueta real.
-        {% else %}
-          Para comparación automática con etiqueta real, inicia la app con <code>--reference ruta/REFERENCE-v3.csv</code> o coloca el CSV en <code>dataset2017/REFERENCE-v3.csv</code>. También puedes escribir la etiqueta manualmente arriba.
-        {% endif %}
-      </p>
+      <p class="hint muted" data-i18n="upload.trueLabelsHint">Si subes .hea + .mat, la comparación usa automáticamente el campo Dx del header. Para CSV puedes escribir clases o códigos SNOMED separados por coma.</p>
 
-      <div class="quickwrap">
-        <div class="quick-label" data-i18n="step1.quick">Ejemplos rápidos</div>
-        <div class="quick-grid">
-          <button type="button" class="example-card" data-kind="normal">
-            <span class="example-dot" style="background:#2ca02c"></span>
-            <span><strong data-i18n="quick.normal">Ritmo normal</strong><br><small data-i18n="quick.normalSub">ejemplo · sin subir archivo</small></span>
-          </button>
-          <button type="button" class="example-card" data-kind="af">
-            <span class="example-dot" style="background:#d62728"></span>
-            <span><strong data-i18n="quick.af">Fibrilación auricular</strong><br><small data-i18n="quick.afSub">ejemplo · sin subir archivo</small></span>
-          </button>
-          <button type="button" class="example-card" data-kind="noise">
-            <span class="example-dot" style="background:#7f7f7f"></span>
-            <span><strong data-i18n="quick.noise">Ruido / artefacto</strong><br><small data-i18n="quick.noiseSub">ejemplo · sin subir archivo</small></span>
-          </button>
-        </div>
-      </div>
-
-      <!-- Advertencia multicanal (solo si el archivo tiene varias derivaciones) -->
-      <div id="leadsBanner" class="banner-warn" hidden>
-        <div class="banner-ico"><svg class="ico"><use href="#i-warn"/></svg></div>
-        <div class="banner-txt">
-          <strong data-i18n="leads.title">Se detectaron múltiples derivaciones</strong>
-          <span id="leadsText"></span>
-        </div>
-        <div class="banner-act">
-          <select id="leadsSelect" aria-label="Seleccionar derivación"></select>
-          <button type="button" id="leadsContinue" class="secondary">OK</button>
-        </div>
+      <div class="auto-model-note">
+        <svg class="ico"><use href="#i-detail"/></svg>
+        <span data-i18n="upload.autoModel">La app selecciona automáticamente el mejor checkpoint disponible en la carpeta saved/ configurada.</span>
       </div>
 
       <div class="btn-row">
-        <button type="submit" id="btnClassify" class="primary big"><span class="btn-spinner" aria-hidden="true"></span><span data-i18n="btn.analyze">Analizar ECG</span></button>
+        <button type="button" id="btnClassify" class="primary big"><span class="btn-spinner" aria-hidden="true"></span><span data-i18n="btn.analyze">Analizar ECG</span></button>
+        <button type="button" id="btnClear" class="secondary big"><svg class="ico"><use href="#i-file"/></svg><span data-i18n="btn.clear">Limpiar</span></button>
       </div>
       <div id="status" class="status" role="status"></div>
     </section>
 
-    <!-- ======== RESULTADO ======== -->
     <section class="panel" id="sec-vis" hidden>
       <div class="panel-head">
-        <h1 data-i18n="nav.vis">Resultado</h1>
-        <p class="panel-sub" data-i18n="vis.sub">Trazado del ECG, clasificación por tramos y distribución.</p>
+        <h1 data-i18n="result.title">Resultado</h1>
+        <p class="panel-sub" data-i18n="result.sub">Predicción multilabel, trazado en papel milimetrado, probabilidades por clase y descarga de reporte.</p>
       </div>
 
       <div id="visEmpty" class="empty-state">
         <div class="es-icon"><svg class="ico ico-lg"><use href="#i-heart"/></svg></div>
         <p class="es-title" data-i18n="empty.title">Aún no hay resultados</p>
-        <p data-i18n="empty.body">Sube un ECG o usa un ejemplo y pulsa «Analizar ECG».</p>
+        <p data-i18n="empty.body">Sube un ECG y pulsa Analizar ECG.</p>
       </div>
 
       <div id="visContent" hidden>
@@ -181,248 +138,179 @@
         <div class="diagnosis" id="diagnosisBox"></div>
         <div id="trafficBox" class="traffic"></div>
         <div id="summaryBox" class="summary"></div>
-        <div id="gtBox" class="gt"></div>
+        <div id="gtBox" class="gt" hidden></div>
+        <p class="paper-note" data-i18n="result.paper">El trazado se muestra con cuadrícula tipo papel milimetrado ECG.</p>
         <div class="plot-wrap"><div id="plotDiv"></div></div>
 
         <div class="btn-row">
           <button type="button" id="btnPrint" class="secondary big">
-            <svg class="ico"><use href="#i-file"/></svg><span data-i18n="btn.print">Descargar informe (PDF)</span>
+            <svg class="ico"><use href="#i-report"/></svg><span data-i18n="btn.pdf">Descargar informe (PDF)</span>
           </button>
+          <a id="btnCsv" class="button-like secondary big" href="#" download hidden>
+            <svg class="ico"><use href="#i-file"/></svg><span data-i18n="btn.csv">Descargar CSV convertido</span>
+          </a>
+          <a id="btnPng" class="button-like secondary big" href="#" target="_blank" rel="noopener" hidden>
+            <svg class="ico"><use href="#i-viz"/></svg><span data-i18n="btn.png">Abrir trazado PNG</span>
+          </a>
         </div>
-        <div id="reportBody" class="report" hidden></div>
       </div>
     </section>
 
-    <!-- ======== DETALLE TÉCNICO ======== -->
     <section class="panel" id="sec-det" hidden>
       <div class="panel-head">
-        <h1 data-i18n="nav.detail">Detalle Técnico</h1>
-        <p class="panel-sub" data-i18n="detail.sub">Rigor metodológico: enfoque, ficha técnica y artefactos de validación.</p>
+        <h1 data-i18n="detail.title">Detalle Técnico</h1>
+        <p class="panel-sub" data-i18n="detail.sub">Ficha técnica del modelo, preprocesamiento, umbrales, comparación con etiquetas reales y métricas exportadas.</p>
       </div>
       <div id="detEmpty" class="empty-state">
         <div class="es-icon"><svg class="ico ico-lg"><use href="#i-detail"/></svg></div>
-        <p class="es-title" data-i18n="detail.empty">Aún no hay detalle</p>
-        <p data-i18n="empty.body">Sube un ECG y pulsa «Analizar ECG» para ver la ficha técnica.</p>
+        <p class="es-title" data-i18n="detail.emptyTitle">Aún no hay detalle de predicción</p>
+        <p data-i18n="detail.emptyBody">Después de analizar un ECG se completará la ficha del registro.</p>
       </div>
       <div id="detContent" hidden>
-        <div class="method" data-i18n="methodology"></div>
-
-        <h3 class="sec-title"><span class="sec-tag" data-i18n="det.model">Ficha técnica del modelo</span></h3>
-        {% set cfg = model_info.config if model_info and model_info.config else {} %}
-        {% set is_cnn = cfg.get('is_regular_conv', False) %}
-        <table class="model-table">
-          <tbody>
-            <tr><th data-i18n="det.arch">Arquitectura</th><td>{% if is_cnn %}CNN convencional equivalente · sin conexiones residuales{% else %}ResNet-34 de la réplica · 16 bloques residuales{% endif %} · {{ model_n_params if model_n_params is not none else '—' }} parámetros</td></tr>
-            <tr><th data-i18n="det.dataset">Conjunto de datos</th><td>PhysioNet CinC2017 · ECG de una sola derivación · {{ model_info.train_fs if model_info else '300' }} Hz · segmentos de {{ model_info.step if model_info else '256' }} muestras</td></tr>
-            <tr><th data-i18n="det.classes">Ritmos reconocidos</th><td>{{ (model_info.classes) if model_info else '—' }}</td></tr>
-            <tr><th data-i18n="det.val">Fe del entrenamiento (val)</th><td>
-              {% if model_info and model_info.meta %}
-                {% if model_info.meta.val_acc is not none %}<span data-i18n="det.acc">exactitud</span> {{ '%.1f' % (model_info.meta.val_acc*100) }}%<br>{% endif %}
-                {% if model_info.meta.val_loss is not none %}<span data-i18n="det.loss">pérdida</span> {{ '%.3f' % model_info.meta.val_loss }}{% if model_info.meta.epoch is not none %} (época {{ model_info.meta.epoch }}){% endif %}{% endif %}
-              {% else %}—{% endif %}</td></tr>
-            <tr><th data-i18n="det.trained">Entrenado</th><td>{{ model_train_date or '—' }}{% if model_hash %} · id <code>{{ model_hash }}</code>{% endif %}</td></tr>
-          </tbody>
-        </table>
-
-        {% if metrics %}
-        <!-- ===== Métricas reales de evaluación (exportadas por evaluate.py) ===== -->
-        <h3 class="sec-title"><span class="sec-tag">Métricas de evaluación (test/dev real)</span></h3>
-        <p class="hint muted">Nivel de registro (una predicción por registro, modo sobre sus tramos) · {{ metrics.n }} registros · generado {{ metrics.generated_at }}.</p>
-        <table class="model-table metric-table">
-          <tbody>
-            <tr><th>Exactitud (accuracy)</th><td>{{ '%.2f' % (metrics.accuracy*100) }}%</td></tr>
-            <tr><th>Macro-F1 (todas las clases)</th><td>{{ '%.3f' % metrics.macro_f1 }}</td></tr>
-            <tr><th>Weighted-F1</th><td>{{ '%.3f' % metrics.weighted_f1 }}</td></tr>
-            <tr><th>Challenge-F1 (N/A/O) <span class="hint muted">— métrica oficial del paper/CinC2017</span></th><td><strong>{{ '%.3f' % metrics.challenge_f1 }}</strong></td></tr>
-          </tbody>
-        </table>
-        <table class="iv-table per-class-table">
-          <thead><tr><th>Clase</th><th>Precisión</th><th>Recall</th><th>F1</th><th>n real</th><th>n pred</th></tr></thead>
-          <tbody>
-            {% for c in metrics.labels %}
-            {% set pc = metrics.per_class[c] %}
-            <tr>
-              <td class="per-class-name">{{ c }}</td>
-              <td>{{ '%.3f' % pc.precision }}</td>
-              <td>{{ '%.3f' % pc.recall }}</td>
-              <td><strong>{{ '%.3f' % pc.f1 }}</strong></td>
-              <td>{{ pc.n_true }}</td>
-              <td>{{ pc.n_pred }}</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-        {% else %}
-        <p class="hint muted">Aún no hay métricas de evaluación. Ejecuta <code>python examples/cinc17/evaluate.py --data_json &lt;dev.json&gt; --saved saved --save_metrics_dir webapp/static/metrics</code> para calcular y mostrar aquí los resultados reales (accesibilidad, macro-F1 y F1 oficial CinC2017).</p>
-        {% endif %}
-
-        <!-- ===== Reproducibilidad: hiperparámetros vs. paper ===== -->
-        <h3 class="sec-title"><span class="sec-tag">Hiperparámetros vs. paper (reproducibilidad)</span></h3>
-        {% set cfg = model_info.config if model_info and model_info.config else {} %}
-        <table class="model-table">
-          <tbody>
-            <tr><th>conv_subsample_lengths</th><td><code>{{ cfg.get('conv_subsample_lengths', '[1, 2] × 8') }}</code> ≡ paper <code>[1, 2] × 8</code></td></tr>
-            <tr><th>conv_filter_length</th><td><code>{{ cfg.get('conv_filter_length', 16) }}</code></td></tr>
-            <tr><th>conv_num_filters_start</th><td><code>{{ cfg.get('conv_num_filters_start', 32) }}</code></td></tr>
-            <tr><th>conv_init</th><td><code>{{ cfg.get('conv_init', 'he_normal') }}</code></td></tr>
-            <tr><th>conv_activation</th><td><code>{{ cfg.get('conv_activation', 'relu') }}</code></td></tr>
-            <tr><th>conv_dropout</th><td><code>{{ cfg.get('conv_dropout', 0.2) }}</code></td></tr>
-            <tr><th>conv_num_skip</th><td><code>{{ cfg.get('conv_num_skip', 2) }}</code></td></tr>
-            <tr><th>conv_increase_channels_at</th><td><code>{{ cfg.get('conv_increase_channels_at', 4) }}</code></td></tr>
-            <tr><th>learning_rate</th><td><code>{{ cfg.get('learning_rate', 0.001) }}</code></td></tr>
-            <tr><th>batch_size</th><td><code>{{ cfg.get('batch_size', 32) }}</code></td></tr>
-            <tr><th>STEP (tamaño de segmento)</th><td><code>{{ model_info.step if model_info else 256 }}</code></td></tr>
-            <tr><th>Frecuencia de muestreo</th><td><code>{{ model_info.train_fs if model_info else 300 }}</code> Hz</td></tr>
-            <tr><th>Normalización</th><td>media / desviación global del conjunto de entrenamiento; padding por lote</td></tr>
-          </tbody>
-        </table>
-
-        <div id="metricsBox" class="metrics" hidden>
-          <h3 class="sec-title"><span class="sec-tag">Figuras de validación</span></h3>
-          <div class="metrics-grid">
-            <figure><img src="/static/metrics/confusion_matrix.png" alt="Matriz de confusión"><figcaption>Matriz de confusión (nivel registro)</figcaption></figure>
-            <figure><img src="/static/metrics/f1_per_class.png" alt="F1 por clase"><figcaption>F1 por clase</figcaption></figure>
-          </div>
-        </div>
-
-        <div id="intervalList" class="intervals"></div>
-        <p class="hint muted"><code>python examples/cinc17/evaluate.py --saved {{ models_dir }} --save_metrics_dir webapp/static/metrics</code></p>
-      </div>
-    </section>
-
-    <!-- ======== EXPERIMENTOS ======== -->
-    <section class="panel" id="sec-exp" hidden>
-      <div class="panel-head">
-        <h1 data-i18n="nav.experiments">Experimentos</h1>
-        <p class="panel-sub">Resultados reproducibles de la comparación arquitectónica y del análisis de robustez. Las tablas se completan automáticamente cuando existen los archivos en <code>results/cinc17/</code>.</p>
+        <div class="method" data-i18n="detail.method">Enfoque: la señal se ordena a 12 derivaciones estándar, se remuestrea a 500 Hz, se normaliza por derivación, se ajusta a 5000 muestras y se clasifica con salidas sigmoid independientes.</div>
+        <h3 class="sec-title"><span class="sec-tag" data-i18n="detail.recordSheet">Ficha del registro analizado</span></h3>
+        <table class="model-table"><tbody id="technicalRows"></tbody></table>
+        <h3 class="sec-title"><span class="sec-tag" data-i18n="detail.probabilities">Probabilidades por clase</span></h3>
+        <div class="iv-scroll"><table class="iv-table" id="probTable"></table></div>
       </div>
 
-      <div class="method">
-        Objetivo experimental: mantener el mismo problema de CinC2017 y evaluar dos preguntas: <strong>1)</strong> si las conexiones residuales mejoran frente a una CNN convencional equivalente, y <strong>2)</strong> qué tan sensible es el modelo ante degradaciones controladas de la señal ECG.
-      </div>
+      <h3 class="sec-title"><span class="sec-tag" data-i18n="detail.modelSheet">Ficha técnica del modelo cargado automáticamente</span></h3>
+      {% set cfg = model_info.config if model_info and model_info.config else {} %}
+      <table class="model-table">
+        <tbody>
+          <tr><th data-i18n="tech.arch">Arquitectura</th><td>{{ model_info.model_type if model_info else 'No cargado' }}</td></tr>
+          <tr><th data-i18n="tech.input">Entrada</th><td>{{ num_leads }} derivaciones · {{ sampling_rate }} Hz · {{ input_length }} muestras · {{ window_seconds }} s</td></tr>
+          <tr><th data-i18n="tech.classes">Clases</th><td>{{ num_classes }} salidas multilabel: {{ (model_info.classes if model_info else []) | join(', ') }}</td></tr>
+          <tr><th data-i18n="tech.checkpoint">Checkpoint</th><td><code>{{ resolved_model }}</code></td></tr>
+          <tr><th data-i18n="tech.trained">Entrenado</th><td>{{ model_train_date or '—' }}{% if model_hash %} · id <code>{{ model_hash }}</code>{% endif %}</td></tr>
+          <tr><th data-i18n="tech.epoch">Época / val_loss</th><td>{% if model_info and model_info.meta %}{{ model_info.meta.epoch or '—' }} · {{ model_info.meta.val_loss or '—' }}{% else %}—{% endif %}</td></tr>
+          <tr><th data-i18n="tech.params">Parámetros</th><td>{% if model_info and model_info.num_parameters %}{{ '{:,}'.format(model_info.num_parameters.total).replace(',', ' ') }}{% else %}—{% endif %}</td></tr>
+          <tr><th data-i18n="tech.loss">Pérdida</th><td><code>BCEWithLogitsLoss</code></td></tr>
+          <tr><th data-i18n="tech.activation">Activación</th><td>Sigmoid</td></tr>
+          <tr><th>conv_subsample_lengths</th><td><code>{{ cfg.get('conv_subsample_lengths', '[1, 2] × 8') }}</code></td></tr>
+          <tr><th>conv_filter_length</th><td><code>{{ cfg.get('conv_filter_length', 7) }}</code></td></tr>
+          <tr><th>conv_num_filters_start</th><td><code>{{ cfg.get('conv_num_filters_start', 32) }}</code></td></tr>
+          <tr><th>conv_dropout</th><td><code>{{ cfg.get('conv_dropout', 0.2) }}</code></td></tr>
+          <tr><th>batch_size</th><td><code>{{ cfg.get('batch_size', '—') }}</code></td></tr>
+          <tr><th>learning_rate</th><td><code>{{ cfg.get('learning_rate', '—') }}</code></td></tr>
+        </tbody>
+      </table>
 
-      <!-- ===== Experimento 2: ResNet vs CNN ===== -->
-      <h3 class="sec-title"><span class="sec-tag">Experimento 2 · ResNet-34 vs CNN convencional</span></h3>
-      {% if experiments and experiments.comparison %}
-      <p class="hint muted">Dataset: <code>{{ experiments.comparison.data_json }}</code></p>
-      <div class="iv-scroll exp-scroll">
-        <table class="iv-table exp-table">
-          <thead>
-            <tr>
-              <th>Modelo</th><th>Arquitectura</th><th>Parámetros</th><th>Tiempo</th>
-              <th>Accuracy</th><th>Macro-F1</th><th>Weighted-F1</th><th>Challenge-F1</th>
-            </tr>
-          </thead>
+      <h3 class="sec-title"><span class="sec-tag" data-i18n="detail.schema">Esquema de clases SNOMED-CT</span></h3>
+      <div class="iv-scroll class-scroll">
+        <table class="iv-table">
+          <thead><tr><th>#</th><th data-i18n="table.class">Clase</th><th data-i18n="table.description">Descripción</th><th data-i18n="table.codes">Códigos</th></tr></thead>
           <tbody>
-          {% for name, item in experiments.comparison.models.items() %}
-            {% set info = item.info %}
-            {% set met = item.metrics %}
-            <tr>
-              <td><strong>{{ name }}</strong></td>
-              <td>{{ info.model_type }}</td>
-              <td>{{ '{:,}'.format(info.num_parameters.total).replace(',', ' ') if info.num_parameters else '—' }}</td>
-              <td>{% if info.training_minutes is not none %}{{ '%.2f' % info.training_minutes }} min{% else %}—{% endif %}</td>
-              <td>{{ '%.3f' % met.accuracy }}</td>
-              <td>{{ '%.3f' % met.macro_f1 }}</td>
-              <td>{{ '%.3f' % met.weighted_f1 }}</td>
-              <td><strong>{{ '%.3f' % met.challenge_f1 }}</strong></td>
-            </tr>
+          {% for group in class_groups %}
+            <tr><td class="iv-idx">{{ loop.index0 }}</td><td><strong>{{ group.name }}</strong></td><td>{{ group.display_name }}</td><td><code>{{ group.codes | join(', ') }}</code></td></tr>
           {% endfor %}
           </tbody>
         </table>
       </div>
 
-      <h4 class="exp-subtitle">F1 por clase</h4>
-      <div class="iv-scroll exp-scroll">
-        <table class="iv-table exp-table">
-          <thead><tr><th>Modelo</th><th>Clase</th><th>Precisión</th><th>Recall</th><th>F1</th><th>n real</th><th>n pred</th></tr></thead>
-          <tbody>
-          {% for name, item in experiments.comparison.models.items() %}
-            {% for c, pc in item.metrics.per_class.items() %}
-            <tr>
-              <td>{{ name }}</td>
-              <td><code>{{ c }}</code></td>
-              <td>{{ '%.3f' % pc.precision }}</td>
-              <td>{{ '%.3f' % pc.recall }}</td>
-              <td><strong>{{ '%.3f' % pc.f1 }}</strong></td>
-              <td>{{ pc.n_true }}</td>
-              <td>{{ pc.n_pred }}</td>
-            </tr>
-            {% endfor %}
-          {% endfor %}
-          </tbody>
-        </table>
-      </div>
-      {% else %}
-      <div class="help-box">
-        <strong>Resultado pendiente.</strong>
-        <p>Entrena ambos modelos y ejecuta la comparación para que esta tabla aparezca aquí:</p>
-        <p><code>python -m ecg.train examples/cinc17/config.json -e cinc17_resnet --seed 2018</code></p>
-        <p><code>python -m ecg.train examples/cinc17/config_regular_cnn.json -e cinc17_cnn --seed 2018</code></p>
-        <p><code>python examples/cinc17/compare_models.py --data_json examples/cinc17/dev.json --resnet_saved saved/cinc17_resnet --cnn_saved saved/cinc17_cnn --out_dir results/cinc17/resnet_vs_cnn</code></p>
-      </div>
-      {% endif %}
-
-      <!-- ===== Experimento 3: Robustez ===== -->
-      <h3 class="sec-title"><span class="sec-tag">Experimento 3 · Robustez frente a perturbaciones ECG</span></h3>
-      {% if experiments and experiments.robustness %}
-        {% for model_name, rob in experiments.robustness.items() %}
-        <h4 class="exp-subtitle">{{ model_name }}</h4>
-        <p class="hint muted">Checkpoint: <code>{{ rob.model.model_path }}</code> · semilla {{ rob.seed }}</p>
+      <h3 class="sec-title"><span class="sec-tag" data-i18n="detail.metrics">Métricas de evaluación</span></h3>
+      {% if metrics and metrics.found %}
+        <p class="hint muted"><span data-i18n="detail.metricsFrom">Resultados leídos desde</span> <code>{{ metrics.path }}</code>.</p>
         <div class="iv-scroll exp-scroll">
           <table class="iv-table exp-table">
-            <thead><tr><th>Condición</th><th>Descripción</th><th>Accuracy</th><th>Macro-F1</th><th>Weighted-F1</th><th>Challenge-F1</th><th>n</th></tr></thead>
+            <thead><tr><th>Split</th><th>n</th><th>F1 macro</th><th>F1 micro</th><th>AUROC macro</th><th>AUPRC macro</th><th>Exact match</th></tr></thead>
             <tbody>
-            {% for row in rob.conditions %}
-              <tr>
-                <td><code>{{ row.condition }}</code></td>
-                <td>{{ row.description }}</td>
-                <td>{{ '%.3f' % row.accuracy }}</td>
-                <td>{{ '%.3f' % row.macro_f1 }}</td>
-                <td>{{ '%.3f' % row.weighted_f1 }}</td>
-                <td><strong>{{ '%.3f' % row.challenge_f1 }}</strong></td>
-                <td>{{ row.n }}</td>
-              </tr>
-            {% endfor %}
+              {% for row in metrics.global %}
+              <tr><td>{{ row.split }}</td><td>{{ row.samples }}</td><td>{{ '%.3f' % row.f1_macro }}</td><td>{{ '%.3f' % row.f1_micro }}</td><td>{{ '%.3f' % row.auroc_macro if row.auroc_macro is not none else '—' }}</td><td>{{ '%.3f' % row.auprc_macro if row.auprc_macro is not none else '—' }}</td><td>{{ '%.3f' % row.exact_match_ratio }}</td></tr>
+              {% endfor %}
             </tbody>
           </table>
         </div>
-        {% endfor %}
+        <div class="iv-scroll exp-scroll">
+          <table class="iv-table exp-table">
+            <thead><tr><th data-i18n="table.class">Clase</th><th data-i18n="metric.support">Soporte +</th><th data-i18n="metric.sensitivity">Sensibilidad</th><th data-i18n="metric.specificity">Especificidad</th><th>F1</th><th>AUROC</th><th>AUPRC</th></tr></thead>
+            <tbody>
+              {% for row in metrics.per_class_test %}
+              <tr><td><code>{{ row['class'] }}</code></td><td>{{ row.support_positive }}</td><td>{{ '%.3f' % row.sensitivity_recall }}</td><td>{{ '%.3f' % row.specificity if row.specificity is not none else '—' }}</td><td><strong>{{ '%.3f' % row.f1 }}</strong></td><td>{{ '%.3f' % row.auroc if row.auroc is not none else '—' }}</td><td>{{ '%.3f' % row.auprc if row.auprc is not none else '—' }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="help-box">
+          <strong data-i18n="detail.metricsPending">Métricas pendientes.</strong>
+          <p data-i18n="detail.metricsCmd">Después de entrenar, ejecute evaluación para llenar esta sección:</p>
+          <p><code>python examples/cinc2020/evaluate.py examples/cinc2020/config.json saved/cinc2020/cinc2020_resnet/&lt;run&gt;/best.pt --output-dir results/cinc2020_12_resnet</code></p>
+        </div>
+      {% endif %}
+    </section>
+
+    <section class="panel" id="sec-exp" hidden>
+      <div class="panel-head">
+        <h1 data-i18n="exp.title">Experimentos</h1>
+        <p class="panel-sub" data-i18n="exp.sub">Comparación arquitectónica y robustez con perturbaciones controladas.</p>
+      </div>
+
+      <div class="method" data-i18n="exp.method">Objetivo experimental: comparar de forma justa la red residual frente a una CNN convencional equivalente usando el mismo dataset, split, preprocesamiento, entrenamiento y métricas; y medir robustez ante degradaciones controladas de la señal.</div>
+
+      <h3 class="sec-title"><span class="sec-tag" data-i18n="exp.compare">ResNet-34 vs CNN convencional</span></h3>
+      {% if experiments and experiments.comparison_found %}
+      <p class="hint muted">Archivo: <code>{{ experiments.comparison_path }}</code></p>
+      <div class="iv-scroll exp-scroll">
+        <table class="iv-table exp-table">
+          <thead><tr><th data-i18n="table.model">Modelo</th><th>Split</th><th>n</th><th>F1 macro</th><th>F1 micro</th><th>Sens. macro</th><th>Esp. macro</th><th>AUROC macro</th></tr></thead>
+          <tbody>
+          {% for row in experiments.comparison %}
+            <tr><td><strong>{{ row.model }}</strong></td><td>{{ row.split }}</td><td>{{ row.samples }}</td><td>{{ '%.3f' % row.f1_macro }}</td><td>{{ '%.3f' % row.f1_micro }}</td><td>{{ '%.3f' % row.sensitivity_macro }}</td><td>{{ '%.3f' % row.specificity_macro if row.specificity_macro is not none else '—' }}</td><td>{{ '%.3f' % row.auroc_macro if row.auroc_macro is not none else '—' }}</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
       {% else %}
       <div class="help-box">
-        <strong>Resultado pendiente.</strong>
-        <p>Cuando exista al menos un análisis de robustez en <code>results/cinc17/robustness_resnet/robustness_metrics.json</code> o <code>results/cinc17/robustness_cnn/robustness_metrics.json</code>, la app lo mostrará automáticamente.</p>
-        <p><code>python examples/cinc17/robustness.py --data_json examples/cinc17/dev.json --saved saved/cinc17_resnet --out_dir results/cinc17/robustness_resnet --seed 1234</code></p>
+        <strong data-i18n="exp.pending">Resultado pendiente.</strong>
+        <p data-i18n="exp.compareCmd">Genere primero métricas para ambos modelos y luego compare:</p>
+        <p><code>python examples/cinc2020/compare_models.py --resnet results/cinc2020_12_resnet --cnn results/cinc2020_12_cnn --output results/cinc2020_12/model_comparison.csv</code></p>
       </div>
       {% endif %}
 
-      <p class="hint muted">Nota: si se usa <code>dev.json</code>, aclara en el informe que también pudo participar en la selección del checkpoint. Para evaluación final imparcial, usa un <code>test.json</code> separado.</p>
+      <h3 class="sec-title"><span class="sec-tag" data-i18n="exp.robust">Robustez frente a perturbaciones ECG</span></h3>
+      {% if experiments and experiments.robustness_found %}
+      <p class="hint muted">Archivo: <code>{{ experiments.robustness_path }}</code></p>
+      <div class="iv-scroll exp-scroll">
+        <table class="iv-table exp-table">
+          <thead><tr><th data-i18n="exp.perturbation">Perturbación</th><th data-i18n="exp.level">Nivel</th><th>n</th><th>F1 macro</th><th>F1 micro</th><th data-i18n="metric.precisionMacro">Precisión macro</th><th data-i18n="metric.sensitivityMacro">Sensibilidad macro</th></tr></thead>
+          <tbody>
+          {% for row in experiments.robustness %}
+            <tr><td><code>{{ row.perturbation }}</code></td><td>{{ row.level }}</td><td>{{ row.samples }}</td><td><strong>{{ '%.3f' % row.f1_macro }}</strong></td><td>{{ '%.3f' % row.f1_micro }}</td><td>{{ '%.3f' % row.precision_macro }}</td><td>{{ '%.3f' % row.sensitivity_macro }}</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="help-box">
+        <strong data-i18n="exp.pending">Resultado pendiente.</strong>
+        <p data-i18n="exp.robustCmd">Ejecute el experimento reproducible de robustez:</p>
+        <p><code>python examples/cinc2020/robustness.py saved/cinc2020/cinc2020_resnet/&lt;run&gt;/best.pt data/cinc2020_12/test.h5 --thresholds results/cinc2020_12_resnet/thresholds_validation.csv --output results/cinc2020_12/robustness.csv</code></p>
+      </div>
+      {% endif %}
     </section>
 
-    <!-- ======== PIE COMPACTO ======== -->
     <footer class="site-footer">
       <div class="footer-row">
-        <span class="footer-brand">ECG · <span data-i18n="app.title">Clasificador de ECG</span></span>
+        <span class="footer-brand">ECG · CINC2020-12</span>
         <span class="footer-meta">{{ project.institucion }} · {{ project.escuela }} · {{ project.anio }}</span>
       </div>
       <div class="footer-sep">
-        <span data-i18n="footer.author">Autor:</span> <b>{{ project.autor or '—' }}</b> ·
-        <span data-i18n="footer.advisor">Asesor:</span> <b>{{ project.asesor or '—' }}</b> ·
+        {% if project.autor %}<span data-i18n="footer.author">Autor:</span> <b>{{ project.autor }}</b> ·{% endif %}
+        {% if project.asesor %}<span data-i18n="footer.advisor">Asesor:</span> <b>{{ project.asesor }}</b> ·{% endif %}
         <span data-i18n="footer.model">Modelo</span> <code id="modelNameFooter">{{ model_hash or '—' }}</code>
       </div>
       <div class="footer-sep footer-refs">
-        <span data-i18n="footer.refs">Ref.:</span> Hannun AY et al. Nat Med 2019.
+        <span>Ref.:</span> Hannun AY et al. Nat Med 2019.
         <a href="{{ reference.doi }}" target="_blank" rel="noopener">DOI {{ reference.doi.split('/')[-1] }}</a>
       </div>
-      <p class="footer-disclaimer">
-        <span data-i18n="app.disclaimer">⚠️ Herramienta de investigación — no reemplaza la lectura de un cardiólogo.</span>
-        <span class="footer-academic" data-i18n="app.disclaimer2">Trabajo de Investigación · UNSA.</span>
-      </p>
+      <p class="footer-disclaimer" data-i18n="footer.disclaimer">Herramienta de investigación — no reemplaza la lectura de un cardiólogo. Trabajo académico · UNSA.</p>
     </footer>
   </main>
 </div>
 
 <script src="{{ url_for('static', filename='plotly.min.js') }}"></script>
 <script src="{{ url_for('static', filename='app.js') }}"></script>
-<script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a385db2b3baff03f',t:'MTc4ODk1MzM3Ng=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</body>
 </html>

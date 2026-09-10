@@ -1,198 +1,226 @@
-# -*- coding: utf-8 -*-
-"""Generate a formal, well-formatted clinical ECG report as a real PDF.
+"""Generación de PDF para resultados de la webapp CINC2020-12."""
 
-The client sends the analysis + the rendered ECG PNG (already produced by the
-server for the interactive view) as JSON; this module builds a clean A4 PDF
-with ReportLab and returns the bytes.
-"""
+from __future__ import annotations
 
-from __future__ import absolute_import
-
-import base64
-import io
-
-from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.lib.units import mm
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import (Image, Paragraph, SimpleDocTemplate,
-                                Spacer, Table, TableStyle)
-
-try:
-    # Helvetica covers Latin with diacritics; register if a serif looks better.
-    pdfmetrics.registerFont(TTFont('DejaVuSerif', 'DejaVuSerif.ttf'))
-    BODY_FONT = 'DejaVuSerif'
-except Exception:
-    BODY_FONT = 'Helvetica'
-
-OUTER = colors.HexColor('#123b6b')
-MUTED = colors.HexColor('#6b7a8d')
-INK = colors.HexColor('#14202f')
-LINE = colors.HexColor('#dde3ea')
+from pathlib import Path
 
 
-def _styles():
-    s = getSampleStyleSheet()
-    title = ParagraphStyle('title', parent=s['Title'], fontName=BODY_FONT,
-                           fontSize=15, textColor=OUTER, spaceAfter=2,
-                           alignment=TA_LEFT)
-    sub = ParagraphStyle('sub', parent=s['Normal'], fontName=BODY_FONT,
-                         fontSize=8.5, textColor=MUTED, spaceAfter=6)
-    h2 = ParagraphStyle('h2', parent=s['Heading2'], fontName=BODY_FONT,
-                        fontSize=11, textColor=OUTER, spaceBefore=6, spaceAfter=4)
-    label = ParagraphStyle('label', parent=s['Normal'], fontName=BODY_FONT,
-                           fontSize=9, textColor=MUTED)
-    value = ParagraphStyle('value', parent=s['Normal'], fontName=BODY_FONT,
-                           fontSize=9.5, textColor=INK)
-    foot = ParagraphStyle('foot', parent=s['Normal'], fontName=BODY_FONT,
-                          fontSize=7.5, textColor=MUTED, alignment=TA_CENTER)
-    return title, sub, h2, label, value, foot
+TITLE = "Reporte ECG CINC2020-12"
+DISCLAIMER = "Uso académico. Las predicciones no constituyen diagnóstico médico."
 
 
-def _png_image(b64):
-    """Return a ReportLab Image scaled to fit the A4 width from base64 PNG."""
-    raw = base64.b64decode(b64)
-    from reportlab.lib.utils import ImageReader
-    reader = ImageReader(io.BytesIO(raw))
-    iw, ih = reader.getSize()
-    max_w = 178 * mm
-    max_h = 120 * mm
-    scale = min(max_w / iw, max_h / ih, 1.0)
-    # Pass the raw PNG bytes so ReportLab builds the flowable correctly.
-    img = Image(__import__('io').BytesIO(raw), width=iw * scale, height=ih * scale)
-    img.hAlign = 'CENTER'
-    return img
+def build_pdf_report(prediction: dict, output_path: str | Path) -> str:
+    """Genera PDF con resultados, detalles técnicos y trazado ECG."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        return _build_reportlab_pdf(prediction, output_path)
+    except Exception:
+        return _build_minimal_pdf(prediction, output_path)
 
 
-def build_report(data, project, reference):
-    """Build a formal A4 PDF from an analysis dict. Returns PDF bytes."""
-    title, sub, h2, label, value, foot = _styles()
+def _build_reportlab_pdf(prediction: dict, output_path: Path) -> str:
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-    plot_b64 = (data.get('plot') or '').split(',')[-1]  # strip data URI prefix
-    name = data.get('patient') or '—'
-    age = data.get('age') or '—'
-    date = data.get('date') or ''
-    dominant = data.get('dominant_name') or data.get('dominant') or '—'
-    pct = data.get('dominant_pct')
-    conf = data.get('confidence')
-    fs = data.get('fs')
-    dur = data.get('duration')
-    lead = data.get('lead') or ''
-    ground_truth = data.get('ground_truth') or None
-    classes = data.get('classes') or []
+    styles = getSampleStyleSheet()
+    title = ParagraphStyle("title", parent=styles["Title"], fontSize=16, textColor=colors.HexColor("#1d4ed8"), spaceAfter=8)
+    h2 = ParagraphStyle("h2", parent=styles["Heading2"], fontSize=12, textColor=colors.HexColor("#1e3a8a"), spaceBefore=10, spaceAfter=6)
+    body = ParagraphStyle("body", parent=styles["BodyText"], fontSize=9, leading=12)
+    small = ParagraphStyle("small", parent=styles["BodyText"], fontSize=8, leading=10, textColor=colors.HexColor("#475569"))
 
-    inst = project.get('institucion', '')
-    esc = project.get('escuela', '')
-    curso = project.get('curso', '')
-    anio = project.get('anio', '')
-    autor = project.get('autor', '')
-    asesor = project.get('asesor', '')
-    ref = reference.get('cita', '')
+    story = [Paragraph(TITLE, title), Paragraph(DISCLAIMER, small), Spacer(1, 4)]
 
-    story = []
-    story.append(Paragraph('Informe de Electrocardiograma (ECG)', title))
-    story.append(Paragraph('{} · {}'.format(inst, esc), sub))
-    story.append(Paragraph('{} {} · V{}'.format(curso, anio, project.get('version', '')), sub))
-    story.append(Spacer(1, 4))
-    story.append(Paragraph('Identificación de la señal', h2))
-
-    # patient table
-    rows = [
-        [Paragraph('Paciente', label), Paragraph(str(name), value)],
-        [Paragraph('Edad', label), Paragraph(str(age), value)],
-        [Paragraph('Fecha', label), Paragraph(str(date), value)],
-        [Paragraph('Ritmo predominante', label),
-         Paragraph('%s%s' % (dominant, (' (%s%%)' % pct) if pct is not None else ''), value)],
-        [Paragraph('Confianza', label),
-         Paragraph(('%.1f%%' % conf) if conf is not None else '—', value)],
+    meta_rows = [
+        ["Registro", prediction.get("record_name", "—")],
+        ["Paciente / ID", prediction.get("patient_name") or "—"],
+        ["Edad", prediction.get("patient_age") or "—"],
+        ["Tipo de entrada", prediction.get("input_type", "—")],
+        ["Modelo", prediction.get("model_type", "—")],
+        ["Checkpoint", prediction.get("model_path", "—")],
+        ["Época checkpoint", str(prediction.get("checkpoint_epoch", "—"))],
+        ["Val loss checkpoint", str(prediction.get("checkpoint_val_loss", "—"))],
+        ["Frecuencia original", f"{prediction.get('original_sampling_rate', '—')} Hz"],
+        ["Frecuencia objetivo", f"{prediction.get('target_sampling_rate', '—')} Hz"],
+        ["Forma procesada", str(prediction.get("processed_shape", "—"))],
+        ["Threshold", "calibrado por clase" if prediction.get("using_class_thresholds") else str(prediction.get("threshold", "—"))],
+        ["Fuente de umbrales", prediction.get("threshold_source", "fallback_global_0.5")],
+        ["Fallback NSR", "aplicado" if (prediction.get("normal_fallback") or {}).get("applied") else "no aplicado"],
     ]
-    if ground_truth:
-        gt_name = ground_truth.get('name') or ground_truth.get('label') or '—'
-        gt_code = ground_truth.get('label') or '—'
-        gt_ok = ground_truth.get('correct')
-        gt_src = ground_truth.get('source') or ''
-        gt_rec = ground_truth.get('record') or ''
-        gt_text = '%s (%s) · %s%s%s' % (
-            gt_name, gt_code,
-            'predicción correcta' if gt_ok else 'predicción distinta',
-            (' · registro ' + str(gt_rec)) if gt_rec else '',
-            (' · ' + str(gt_src)) if gt_src else '')
-        rows.append([Paragraph('Etiqueta real', label), Paragraph(gt_text, value)])
-    rows.extend([
-        [Paragraph('Parámetros de registro', label),
-         Paragraph('%s Hz · 1 derivación%s · duración %s s'
-                   % (fs, (' (' + str(lead) + ')') if lead else '',
-                      ('%.1f' % dur) if dur is not None else ''), value)],
-    ])
-    t = Table(rows, colWidths=[45 * mm, 130 * mm], hAlign='LEFT')
-    t.setStyle(TableStyle([
-        ('FONTNAME', (0, 0), (-1, -1), BODY_FONT),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
-        ('TEXTCOLOR', (0, 0), (0, -1), MUTED),
-        ('TEXTCOLOR', (1, 0), (1, -1), INK),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('TOPPADDING', (0, 0), (-1, -1), 4),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-        ('LINEBELOW', (0, 0), (-1, -2), 0.4, LINE),
-        ('BOX', (0, 0), (-1, -1), 0.4, LINE),
-    ]))
-    story.append(t)
+    story.append(Paragraph("Resumen técnico", h2))
+    story.append(_table(meta_rows, col_widths=[45 * mm, 130 * mm]))
 
-    # distribution table
-    if classes:
-        story.append(Paragraph('Distribución de clases', h2))
-        hdrs = [Paragraph('<b>Clase</b>', label), Paragraph('<b>%</b>', label),
-                Paragraph('<b>Intervalos</b>', label)]
-        body = [hdrs]
-        for c in classes:
-            body.append([Paragraph(str(c.get('name', '')), value),
-                         Paragraph(str(c.get('pct', '')), value),
-                         Paragraph(str(c.get('count', '')), value)])
-        dt = Table(body, colWidths=[120 * mm, 30 * mm, 25 * mm], hAlign='LEFT')
-        dt.setStyle(TableStyle([
-            ('FONTNAME', (0, 0), (-1, -1), BODY_FONT),
-            ('FONTSIZE', (0, 0), (-1, -1), 9),
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#eef3f8')),
-            ('TEXTCOLOR', (0, 0), (-1, 0), OUTER),
-            ('GRID', (0, 0), (-1, -1), 0.4, LINE),
-            ('TOPPADDING', (0, 0), (-1, -1), 4),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-        ]))
-        story.append(dt)
+    positives = prediction.get("positive_predictions") or []
+    story.append(Paragraph("Diagnósticos positivos por threshold", h2))
+    if positives:
+        rows = [["Clase", "Nombre", "Probabilidad", "Nota"]]
+        for item in positives:
+            rows.append([
+                item.get("class", ""),
+                item.get("display_name", ""),
+                f"{item.get('probability', 0) * 100:.2f}%",
+                "fallback NSR" if item.get("postprocessed") else "",
+            ])
+        story.append(_table(rows, header=True, col_widths=[25 * mm, 85 * mm, 30 * mm, 30 * mm]))
+    else:
+        if prediction.get("using_class_thresholds"):
+            story.append(Paragraph("Ninguna clase superó su umbral calibrado.", body))
+        else:
+            story.append(Paragraph("Ninguna clase superó el threshold definido.", body))
 
-    # ECG image
-    story.append(Paragraph('Trazado del ECG', h2))
-    if plot_b64:
-        try:
-            story.append(_png_image(plot_b64))
-        except Exception:
-            story.append(Paragraph('(Sin imagen del trazado)', value))
-    story.append(Spacer(1, 6))
+    comparison = prediction.get("label_comparison") or {}
+    if comparison.get("available"):
+        story.append(Paragraph("Comparación con etiquetas reales", h2))
+        source = "Header WFDB Dx" if comparison.get("source") == "wfdb_header_dx" else "Ingreso manual"
+        predicted = comparison.get("predicted_classes") or []
+        false_positive = comparison.get("false_positive") or []
+        false_negative = comparison.get("false_negative") or []
+        if comparison.get("exact_match"):
+            interpretation = "Las clases predichas coinciden exactamente con las etiquetas reales disponibles."
+        elif not predicted and false_negative and not false_positive:
+            interpretation = "El modelo no activó ninguna clase; como existe etiqueta real, se considera falso negativo."
+        elif false_positive and not false_negative:
+            interpretation = "El modelo activó clases que no están en la etiqueta real; se considera falso positivo."
+        else:
+            interpretation = "Hay diferencias multilabel frente a la etiqueta real."
+        comp_rows = [
+            ["Fuente", source],
+            ["Interpretación", interpretation],
+            ["Reales", ", ".join(comparison.get("true_classes") or []) or "Ninguna"],
+            ["Predichas", ", ".join(predicted) or "Ninguna"],
+            ["Aciertos", ", ".join(comparison.get("true_positive") or []) or "Ninguna"],
+            ["Falsos positivos", ", ".join(false_positive) or "Ninguna"],
+            ["Falsos negativos", ", ".join(false_negative) or "Ninguna"],
+            ["Coincidencia exacta", "Sí" if comparison.get("exact_match") else "No"],
+            ["F1 / Jaccard", f"{comparison.get('f1', 0):.3f} / {comparison.get('jaccard', 0):.3f}"],
+        ]
+        story.append(_table(comp_rows, col_widths=[45 * mm, 130 * mm], font_size=8))
+    else:
+        story.append(Paragraph("Comparación con etiquetas reales", h2))
+        story.append(Paragraph("No se proporcionaron etiquetas reales para este registro.", body))
 
-    # signatures
-    sign = Table([[Paragraph('Investigador/a · %s' % autor if autor else 'Investigador/a', foot),
-                   Paragraph('Asesor/a / validador · %s' % asesor if asesor else 'Asesor/a / validador', foot)]],
-                 colWidths=[89 * mm, 89 * mm], hAlign='CENTER')
-    sign.setStyle(TableStyle([
-        ('LINEABOVE', (0, 0), (-1, -1), 0.5, INK),
-        ('TOPPADDING', (0, 0), (-1, -1), 3),
-    ]))
+    story.append(Paragraph("Probabilidades por clase", h2))
+    rows = [["Clase", "Nombre", "SNOMED", "%", "Umbral", "Pred"]]
+    for item in prediction.get("predictions", []):
+        rows.append([
+            item.get("class", ""),
+            item.get("display_name", ""),
+            ", ".join(item.get("snomed_codes", [])),
+            f"{item.get('probability', 0) * 100:.2f}",
+            f"{item.get('threshold', prediction.get('threshold', 0.5)) * 100:.2f}",
+            "1" if item.get("prediction") else "0",
+        ])
+    story.append(_table(rows, header=True, col_widths=[20 * mm, 58 * mm, 53 * mm, 15 * mm, 18 * mm, 10 * mm], font_size=7))
+
+    details = prediction.get("technical_details") or {}
+    if details:
+        story.append(Paragraph("Detalles metodológicos", h2))
+        story.append(_table([[k, str(v)] for k, v in details.items()], col_widths=[45 * mm, 130 * mm], font_size=8))
+
+    plot_path = prediction.get("plot_path")
+    if plot_path and Path(plot_path).exists():
+        story.append(Paragraph("Trazado ECG preprocesado", h2))
+        img = Image(str(plot_path))
+        max_w = 175 * mm
+        max_h = 105 * mm
+        scale = min(max_w / img.imageWidth, max_h / img.imageHeight, 1.0)
+        img.drawWidth = img.imageWidth * scale
+        img.drawHeight = img.imageHeight * scale
+        story.append(img)
+
     story.append(Spacer(1, 8))
-    story.append(sign)
-    story.append(Spacer(1, 10))
-    story.append(Paragraph(
-        'Herramienta desarrollada con fines académicos de investigación. '
-        'No reemplaza la lectura de un cardiólogo ni debe usarse para '
-        'diagnóstico clínico.', foot))
-    story.append(Paragraph('Referencia: %s' % ref, foot))
+    story.append(Paragraph(DISCLAIMER, small))
 
-    buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4,
-                            leftMargin=16 * mm, rightMargin=16 * mm,
-                            topMargin=15 * mm, bottomMargin=15 * mm,
-                            title='Informe ECG', author=autor or 'ECG App')
+    doc = SimpleDocTemplate(
+        str(output_path),
+        pagesize=A4,
+        leftMargin=14 * mm,
+        rightMargin=14 * mm,
+        topMargin=14 * mm,
+        bottomMargin=14 * mm,
+        title=TITLE,
+    )
     doc.build(story)
-    return buf.getvalue()
+    return str(output_path)
+
+
+def _table(rows, header: bool = False, col_widths=None, font_size: int = 8):
+    from reportlab.lib import colors
+    from reportlab.platypus import Table, TableStyle
+
+    table = Table(rows, colWidths=col_widths, hAlign="LEFT", repeatRows=1 if header else 0)
+    style = [
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#cbd5e1")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("FONTSIZE", (0, 0), (-1, -1), font_size),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ]
+    if header:
+        style.extend([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#dbeafe")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#1e3a8a")),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ])
+    table.setStyle(TableStyle(style))
+    return table
+
+
+def _escape_pdf_text(text: str) -> str:
+    return str(text).replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def _build_minimal_pdf(prediction: dict, output_path: Path) -> str:
+    """Fallback sin reportlab: PDF mínimo de una página con texto."""
+    comparison = prediction.get("label_comparison") or {}
+    lines = [
+        TITLE,
+        DISCLAIMER,
+        f"Registro: {prediction.get('record_name', '—')}",
+        f"Paciente: {prediction.get('patient_name') or '—'}",
+        f"Modelo: {prediction.get('model_type', '—')}",
+        f"Checkpoint: {prediction.get('model_path', '—')}",
+        "",
+        "Comparación real vs predicho:",
+        f"Disponible: {'sí' if comparison.get('available') else 'no'}",
+        f"Reales: {', '.join(comparison.get('true_classes') or []) or '—'}",
+        f"Predichas: {', '.join(comparison.get('predicted_classes') or []) or '—'}",
+        f"Exact match: {'sí' if comparison.get('exact_match') else 'no'}",
+        "",
+        "Probabilidades:",
+    ]
+    for item in prediction.get("predictions", [])[:20]:
+        lines.append(f"{item.get('class')}: {item.get('probability', 0) * 100:.2f}% pred={item.get('prediction')}")
+
+    content = "BT /F1 9 Tf 40 790 Td "
+    for i, line in enumerate(lines[:55]):
+        if i > 0:
+            content += "0 -13 Td "
+        content += f"({_escape_pdf_text(line[:115])}) Tj "
+    content += "ET"
+    content_bytes = content.encode("latin-1", errors="replace")
+
+    objects = [
+        b"1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n",
+        b"2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n",
+        b"3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj\n",
+        b"4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n",
+        b"5 0 obj << /Length " + str(len(content_bytes)).encode() + b" >> stream\n" + content_bytes + b"\nendstream endobj\n",
+    ]
+    pdf = b"%PDF-1.4\n"
+    offsets = [0]
+    for obj in objects:
+        offsets.append(len(pdf))
+        pdf += obj
+    xref_offset = len(pdf)
+    pdf += f"xref\n0 {len(objects) + 1}\n".encode()
+    pdf += b"0000000000 65535 f \n"
+    for offset in offsets[1:]:
+        pdf += f"{offset:010d} 00000 n \n".encode()
+    pdf += f"trailer << /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n".encode()
+    output_path.write_bytes(pdf)
+    return str(output_path)

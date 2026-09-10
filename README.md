@@ -1,444 +1,29 @@
-# ecg-pytorch · Clasificación de arritmias en ECG con PyTorch
+# ECG CINC2020 — ResNet tipo Hannun con 12 clases SNOMED
 
-Reimplementación en **PyTorch** de `awni/ecg`, el código abierto asociado al artículo:
+Adaptación académica del enfoque de Hannun et al. (*Nature Medicine*, 2019) al dataset público **PhysioNet/Computing in Cardiology Challenge 2020**.
 
-> **Cardiologist-Level Arrhythmia Detection and Classification in Ambulatory Electrocardiograms Using a Deep Neural Network** — Hannun, A. Y., Rajpurkar, P., Haghpanahi, M., Tison, G. H., Bourn, C., Turakhia, M. P., & Ng, A. Y. — *Nature Medicine*, 2019.
-
-El proyecto reproduce el experimento público sobre **PhysioNet/CinC 2017** y añade una aplicación web Flask para inferencia, visualización, comparación con etiquetas reales y reporte técnico.
+El dataset original de Hannun et al. pertenece a Zio Patch/iRhythm y no es público. Por eso esta implementación usa CINC2020, con ECG de 12 derivaciones y etiquetas SNOMED-CT. El problema se formula como **clasificación multilabel real**, porque un ECG puede contener más de un diagnóstico simultáneo.
 
 ---
 
-## Qué incluye este repositorio
+## Estructura del proyecto
 
-- **Réplica ResNet-34 del paper**: red convolucional profunda de 34 capas, 16 bloques residuales, pre-activación BatchNorm+ReLU, dropout y salida por intervalos.
-- **CNN convencional equivalente**: misma profundidad, filtros, submuestreo, dropout y crecimiento de canales, pero **sin conexiones residuales**, para estudiar el aporte real de los shortcuts.
-- **Pipeline CinC2017**: una derivación, una etiqueta por registro, normalización global, truncado a múltiplos de 256 muestras y predicción por intervalo.
-- **Entrenamiento reproducible**: `--seed`, Adam, `clipnorm`, reducción de learning rate en plateau, early stopping y checkpoints por época.
-- **Métricas formales**: Accuracy, Macro-F1, Weighted-F1, F1 por clase y **Challenge-F1 oficial CinC2017** sobre N/A/O.
-- **Registro experimental**: cada entrenamiento guarda `history.csv` y `training_summary.json` con tiempo, parámetros y curvas por época.
-- **Experimento ResNet vs CNN**: script automático de comparación y generación de tablas para el informe.
-- **Experimento de robustez**: evaluación ante ruido, deriva de línea base, escalamiento de amplitud y recortes de duración.
-- **App Flask interactiva**: carga de ECG, gráfico Plotly, predicción por tramos, PDF, métricas reales, pestaña de experimentos y comparación automática con `REFERENCE-v3.csv`.
-
----
-
-## Decisión sobre el conjunto de datos
-
-El artículo de Hannun et al. tiene dos partes:
-
-1. Un resultado principal sobre un conjunto privado de iRhythm con 91,232 registros y 12 clases.
-2. Un experimento de generalización sobre el dataset público **PhysioNet/CinC 2017**.
-
-Este repositorio se centra en **CinC 2017**, porque permite mantener el mismo tipo de problema del pipeline original:
-
-| Aspecto | Paper / iRhythm | Este proyecto / CinC2017 | CinC2020 |
-|---|---:|---:|---:|
-| Derivaciones | 1 | 1 | 12 |
-| Frecuencia | 200 Hz | 300 Hz | 500 Hz |
-| Duración | 30 s | 30–60 s | 10 s |
-| Etiquetado | una clase por registro | una clase por registro | multi-etiqueta |
-| Salida | softmax categórica | softmax categórica | multi-label / BCE |
-
-CinC2020 no se usa en esta fase porque obligaría a cambiar el problema a 12 derivaciones y multi-label, alejándose de la réplica.
-
----
-
-## Arquitecturas
-
-### Modelo A · ResNet-34 de la réplica
-
-```text
-Entrada (B, 1, T)
-  ├─ Conv1d(k=16, stride=1, SAME) → BN → ReLU                 32 canales
-  ├─ 16 bloques residuales, submuestreo [1,2,1,2,...,1,2]
-  │    ├─ rama residual: 2 convoluciones por bloque
-  │    └─ shortcut: MaxPool + zero-padding cuando duplican canales
-  ├─ BN → ReLU
-  └─ Linear(num_clases) → softmax por intervalo
-```
-
-### Modelo B · CNN convencional equivalente
-
-Activada con:
-
-```json
-"is_regular_conv": true
-```
-
-en `examples/cinc17/config_regular_cnn.json`.
-
-Mantiene la misma profundidad y configuración de la ResNet, pero elimina los shortcuts residuales. Esto permite responder una pregunta experimental concreta:
-
-> ¿Las conexiones residuales mejoran realmente la clasificación de ECG en CinC2017?
-
-Ambos modelos tienen, con la configuración actual, aproximadamente:
-
-```text
-10,462,276 parámetros entrenables
-```
-
----
-
-## Instalación
-
-Requisitos recomendados:
-
-- Python 3.13.5.
-- PyTorch con CUDA si se desea entrenar en GPU.
-- `numpy`, `scipy`, `tqdm`, `flask`, `matplotlib`, `reportlab`.
-
-```bash
-python -m venv venv
-
-# Windows PowerShell
-.\venv\Scripts\Activate.ps1
-
-# Linux/macOS
-# source venv/bin/activate
-
-pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-Verificación de PyTorch:
-
-```bash
-python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
-```
-
----
-
-## Datos CinC2017
-
-El dataset requiere cuenta de PhysioNet y aceptar el acuerdo de uso:
-
-<https://physionet.org/content/challenge-2017/1.0.0/>
-
-Descarga y coloca, por ejemplo, en `dataset2017/`:
-
-```text
-dataset2017/
-├── REFERENCE-v3.csv
-└── training2017/
-    ├── A00001.mat
-    ├── A00002.mat
-    └── ...
-```
-
-Genera `train.json` y `dev.json`:
-
-```bash
-python examples/cinc17/build_datasets.py \
-  --data_dir dataset2017/training2017 \
-  --label_file dataset2017/REFERENCE-v3.csv \
-  --out_dir examples/cinc17 \
-  --relative \
-  --stratify
-```
-
-Salidas:
-
-```text
-examples/cinc17/train.json
-examples/cinc17/dev.json
-```
-
-> Nota: `REFERENCE-v3.csv` y los archivos `.mat/.dat` del dataset no deberían subirse al repositorio si el acuerdo de uso no lo permite.
-
----
-
-## Entrenamiento
-
-### Experimento 1 · Réplica ResNet-34
-
-```bash
-python -m ecg.train examples/cinc17/config.json \
-  -e cinc17_resnet \
-  --seed 2018
-```
-
-### Experimento 2 · CNN convencional equivalente
-
-```bash
-python -m ecg.train examples/cinc17/config_regular_cnn.json \
-  -e cinc17_cnn \
-  --seed 2018
-```
-
-Cada ejecución guarda checkpoints en:
-
-```text
-saved/<experimento>/<timestamp>/<val_loss>-<val_acc>-<epoch>-<loss>-<acc>.pt
-```
-
-y además:
-
-```text
-history.csv
-training_summary.json
-preproc.bin
-```
-
-El mejor checkpoint se selecciona por el primer número del nombre del archivo: **menor `val_loss`**.
-
----
-
-## Evaluación formal
-
-Evaluar un checkpoint específico:
-
-```bash
-python examples/cinc17/evaluate.py \
-  --data_json examples/cinc17/dev.json \
-  --model_path saved/cinc17_resnet/<timestamp>/<checkpoint>.pt
-```
-
-O elegir automáticamente el mejor checkpoint dentro de una carpeta:
-
-```bash
-python examples/cinc17/evaluate.py \
-  --data_json examples/cinc17/dev.json \
-  --saved saved/cinc17_resnet
-```
-
-Exportar métricas e imágenes para la app Flask:
-
-```bash
-python examples/cinc17/evaluate.py \
-  --data_json examples/cinc17/dev.json \
-  --saved saved/cinc17_resnet \
-  --save_metrics_dir webapp/static/metrics
-```
-
-La app muestra estos resultados en **Detalle Técnico** cuando existe:
-
-```text
-webapp/static/metrics/metrics.json
-```
-
----
-
-## Comparación ResNet-34 vs CNN convencional
-
-Después de entrenar ambos modelos:
-
-```bash
-python examples/cinc17/compare_models.py \
-  --data_json examples/cinc17/dev.json \
-  --resnet_saved saved/cinc17_resnet \
-  --cnn_saved saved/cinc17_cnn \
-  --out_dir results/cinc17/resnet_vs_cnn
-```
-
-Salidas:
-
-```text
-results/cinc17/resnet_vs_cnn/summary.csv
-results/cinc17/resnet_vs_cnn/per_class_metrics.csv
-results/cinc17/resnet_vs_cnn/comparison_metrics.json
-results/cinc17/resnet_vs_cnn/comparison_report.md
-```
-
-La app Flask muestra automáticamente esta comparación en la pestaña **Experimentos** cuando existe:
-
-```text
-results/cinc17/resnet_vs_cnn/comparison_metrics.json
-```
-
-### Última corrida local de referencia
-
-En la ejecución local más reciente del proyecto:
-
-| Modelo | Parámetros | Tiempo entrenamiento | Accuracy | Macro-F1 | Challenge-F1 |
-|---|---:|---:|---:|---:|---:|
-| ResNet-34 | 10,462,276 | 63.42 min | 0.8689 | 0.7653 | 0.8498 |
-| CNN convencional | 10,462,276 | 15.95 min | 0.5937 | 0.1882 | 0.2509 |
-
-Interpretación:
-
-> Al quitar las conexiones residuales, una red igual de profunda pierde capacidad de entrenamiento y rendimiento. En esta corrida, la ResNet supera ampliamente a la CNN convencional.
-
----
-
-## Robustez frente a perturbaciones ECG
-
-Evaluar robustez de la ResNet:
-
-```bash
-python examples/cinc17/robustness.py \
-  --data_json examples/cinc17/dev.json \
-  --saved saved/cinc17_resnet \
-  --out_dir results/cinc17/robustness_resnet \
-  --seed 1234
-```
-
-Opcionalmente, robustez de la CNN:
-
-```bash
-python examples/cinc17/robustness.py \
-  --data_json examples/cinc17/dev.json \
-  --saved saved/cinc17_cnn \
-  --out_dir results/cinc17/robustness_cnn \
-  --seed 1234
-```
-
-Salidas:
-
-```text
-robustness_summary.csv
-robustness_per_class.csv
-robustness_metrics.json
-robustness_report.md
-robustness_curves.png
-```
-
-La app Flask las muestra automáticamente en **Experimentos** cuando existen:
-
-```text
-results/cinc17/robustness_resnet/robustness_metrics.json
-results/cinc17/robustness_cnn/robustness_metrics.json
-```
-
-### Última corrida local de robustez ResNet
-
-| Condición | Accuracy | Macro-F1 | Challenge-F1 |
-|---|---:|---:|---:|
-| Original | 0.8689 | 0.7653 | 0.8498 |
-| Ruido SNR 20 dB | 0.8689 | 0.7767 | 0.8451 |
-| Ruido SNR 10 dB | 0.8173 | 0.6983 | 0.7815 |
-| Ruido SNR 5 dB | 0.6768 | 0.4935 | 0.5761 |
-| Baseline wander | 0.8724 | 0.7762 | 0.8488 |
-| Amplitud ×0.5 | 0.8700 | 0.7554 | 0.8405 |
-| Amplitud ×1.5 | 0.8618 | 0.7486 | 0.8432 |
-| Recorte 10 s | 0.7916 | 0.6615 | 0.7320 |
-| Recorte 20 s | 0.8466 | 0.7272 | 0.8233 |
-
-Interpretación general:
-
-> El modelo es relativamente estable ante ruido leve, baseline wander y cambios moderados de amplitud, pero se degrada claramente con ruido fuerte y recortes agresivos de duración.
-
----
-
-## Aplicación web Flask
-
-La app permite:
-
-- subir ECG en CSV, `.mat`, `.dat` o `.npy`;
-- seleccionar derivación si el archivo tiene múltiples canales;
-- re-muestrear automáticamente a 300 Hz;
-- ver el ECG con bandas de predicción por intervalo;
-- descargar informe PDF;
-- ver métricas reales del modelo;
-- ver comparación ResNet vs CNN;
-- ver resultados de robustez;
-- comparar automáticamente la predicción contra la etiqueta real de `REFERENCE-v3.csv`.
-
-### Ejecutar con ResNet
-
-```bash
-python webapp/app.py \
-  --saved saved/cinc17_resnet \
-  --reference dataset2017/REFERENCE-v3.csv \
-  --host 127.0.0.1 \
-  --port 5000
-```
-
-Abre:
-
-```text
-http://127.0.0.1:5000/
-```
-
-### Modelo usado en la pestaña Resultado
-
-La pestaña **Resultado** usa únicamente el checkpoint cargado al iniciar Flask.
-
-- Con `--saved saved/cinc17_resnet`, usa ResNet-34.
-- Con `--saved saved/cinc17_cnn`, usa la CNN convencional.
-- Con `--model <checkpoint.pt>`, usa exactamente ese checkpoint.
-- Con `--saved saved`, elige automáticamente el checkpoint con menor `val_loss` en toda la carpeta, por lo que puede cargar cualquiera de los modelos disponibles.
-
-Para demostraciones de la réplica principal, se recomienda usar:
-
-```bash
-python webapp/app.py --saved saved/cinc17_resnet --reference dataset2017/REFERENCE-v3.csv
-```
-
-### Comparación con etiquetas reales del CSV
-
-Si se pasa `--reference dataset2017/REFERENCE-v3.csv`, la app compara automáticamente cuando el archivo subido conserva el ID oficial:
-
-```text
-A00001.mat  -> busca A00001 en REFERENCE-v3.csv
-A00001.dat  -> busca A00001 en REFERENCE-v3.csv
-A00001.csv  -> busca A00001 en REFERENCE-v3.csv
-```
-
-En **Resultado** se muestra:
-
-```text
-Etiqueta real: Normal (N)
-Predicción: Normal (N)
-✔ Predicción correcta
-```
-
-Si el archivo no conserva el ID oficial, puedes escribir manualmente la etiqueta en el campo **Diagnóstico conocido**.
-
----
-
-## Endpoints principales de la app
-
-| Ruta | Método | Uso |
-|---|---:|---|
-| `/` | GET | Interfaz principal. |
-| `/predict` | POST | Clasifica un ECG subido. |
-| `/example` | POST | Genera y clasifica una señal sintética. |
-| `/report.pdf` | POST | Genera el informe PDF. |
-| `/models` | GET | Lista checkpoints disponibles. |
-| `/use_model` | POST | Cambia checkpoint activo sin reiniciar. |
-| `/metrics` | GET | Devuelve métricas exportadas por `evaluate.py`. |
-| `/experiments` | GET | Devuelve resultados de comparación y robustez. |
-| `/reference` | GET | Estado de `REFERENCE-v3.csv` y búsqueda de etiquetas. |
-
-Ejemplo:
-
-```text
-http://127.0.0.1:5000/reference?record=A00004
-```
-
----
-
-## Prueba rápida sin dataset real
-
-Para verificar que el pipeline funciona sin descargar CinC2017:
-
-```bash
-python examples/cinc17/make_syntethic.py --train 80 --dev 40
-python -m ecg.train examples/cinc17/config_syntethic.json -e synth --epochs 2
-python examples/cinc17/evaluate.py \
-  --data_json examples/cinc17/synthetic/dev.json \
-  --saved saved/synth
-```
-
-Estas señales son falsas y solo sirven como prueba técnica del código.
-
----
-
-## Estructura del repositorio
+La organización separa paquete, ejemplos, webapp y documentación técnica:
 
 ```text
 .
 ├── ecg/
 │   ├── __init__.py
-│   ├── load.py                  # carga, padding, normalización y lectores ECG
-│   ├── network.py               # ResNet-34 y CNN convencional equivalente
+│   ├── load.py                  # carga, padding, normalización, lectores ECG y mapeo SNOMED
+│   ├── network.py               # ResNet-34 tipo Hannun y CNN convencional equivalente
 │   ├── predict.py               # inferencia desde checkpoints
 │   ├── train.py                 # entrenamiento + logs reproducibles
-│   └── util.py                  # utilidades de checkpoints/parámetros
+│   └── util.py                  # checkpoints, parámetros, seeds y utilidades
 ├── examples/
-│   └── cinc17/
+│   └── cinc2020/
 │       ├── build_datasets.py
 │       ├── compare_models.py
+│       ├── debug_record_prediction.py
 │       ├── config.json
 │       ├── config_regular_cnn.json
 │       ├── config_syntethic.json
@@ -447,74 +32,318 @@ Estas señales son falsas y solo sirven como prueba técnica del código.
 │       └── robustness.py
 ├── webapp/
 │   ├── app.py                   # Flask + rutas principales
-│   ├── prediction.py            # servicio de inferencia y gráficos
+│   ├── prediction.py            # servicio de inferencia, conversión y gráficos
+│   ├── project_info.py          # datos institucionales mostrados en la app
 │   ├── report_pdf.py            # generación del PDF
-│   ├── wsgi.py                  # entrada WSGI; lee ECG_SAVED/ECG_MODEL/ECG_REFERENCE
+│   ├── wsgi.py                  # entrada WSGI; acepta CLI o variables opcionales
+│   ├── README.md
 │   ├── templates/index.html
 │   └── static/
 │       ├── app.js
 │       ├── style.css
 │       └── plotly.min.js
 ├── docs/
-│   └── experimentos_cinc2017.md
+│   ├── experimentos_cinc2020.md
+│   └── informe_cinc2020_12.md
 ├── requirements.txt
 └── README.md
 ```
 
 ---
 
-## Consideraciones metodológicas
+## Esquema de 12 clases
 
-- `dev.json` puede haber participado en la selección del checkpoint por `val_loss`; para una evaluación final imparcial usa un `test.json` separado si lo tienes.
-- El `Challenge-F1` oficial de CinC2017 promedia F1 en **N/A/O** y excluye la clase `~`.
-- Las métricas impresas durante entrenamiento no son idénticas a las métricas formales de `evaluate.py` o `compare_models.py`, porque estas últimas trabajan a nivel de registro mediante voto mayoritario.
-- La comparación automática con `REFERENCE-v3.csv` en la app depende del nombre del archivo subido; si el ID oficial no está en el nombre, usa el campo manual de diagnóstico conocido.
+La fuente de verdad está en:
 
----
-
-## Trabajo futuro
-
-- Evaluar sobre un conjunto test independiente para evitar leakage de selección de checkpoint.
-- Probar regularización o estrategias de optimización adicionales para la CNN convencional.
-- Ajustar ponderación de clases o sampling para mejorar la clase `~`.
-- Exportar el modelo a ONNX/TorchScript.
-- Extender a datasets multi-derivación y multi-etiqueta en una línea de trabajo separada.
-
----
-
-## Licencia
-
-Distribuido bajo licencia **GPL-3.0**, igual que el repositorio original `awni/ecg`. Consulta `LICENSE`.
-
----
-
-## Cómo citar
-
-Si utilizas este proyecto en investigación, cita el artículo original:
-
-```bibtex
-@article{hannun2019cardiologist,
-  title={Cardiologist-Level Arrhythmia Detection and Classification in Ambulatory
-         Electrocardiograms Using a Deep Neural Network},
-  author={Hannun, Awni Y and Rajpurkar, Pranav and Haghpanahi, Masoumeh and
-          Tison, Geoffrey H and Bourn, Codie and Turakhia, Mintu P and Ng, Andrew Y},
-  journal={Nature Medicine},
-  volume={25},
-  number={1},
-  pages={65},
-  year={2019},
-  publisher={Nature Publishing Group}
-}
+```text
+ecg/load.py
 ```
 
-Para el dataset CinC2017:
+| Índice | Clase | Códigos SNOMED-CT incluidos |
+|---:|---|---|
+| 0 | `NSR` | `426783006` |
+| 1 | `LAD` | `39732003` |
+| 2 | `MI` | `164865005` |
+| 3 | `TAb` | `164934002` |
+| 4 | `AF` | `164889003`, `164890007`, `195080001`, `282825002`, `426749004`, `314208002` |
+| 5 | `LVH` | `164873001` |
+| 6 | `VEctopy` | `427172004`, `17338001`, `164884008`, `11157007`, `251180001`, `251182009`, `75532003`, `81898007` |
+| 7 | `AVBlock` | `270492004`, `195042002`, `233917008`, `27885002`, `54016002`, `204384007` |
+| 8 | `STach` | `427084000` |
+| 9 | `RBBB` | `59118001`, `713427006` |
+| 10 | `SB` | `426177001` |
+| 11 | `AEctopy_Junctional` | `284470004`, `63593006`, `713422000`, `426664006`, `29320008`, `426995002`, `251164006`, `426648003`, `195101003`, `251268003`, `251170000`, `251168009`, `251173003` |
 
-```bibtex
-@article{clifford2017af,
-  title={AF Classification from a short single lead ECG recording: the
-         PhysioNet/Computing in Cardiology Challenge 2017},
-  author={Clifford, Gari D and Liu, Chengyu and Moody, Benjamin and others},
-  journal={Computing in Cardiology},
-  year={2017}
-}
+Notas:
+
+- `RBBB` y `CRBBB` se fusionan en una única salida `RBBB`.
+- Las salidas son independientes: se usa sigmoid por clase, no softmax.
+- `TSV`, `TV`, `WPW` y ruido quedan excluidos. TSV/TV/WPW no alcanzan el mínimo de 1000 ECGs en CINC2020 ni agrupando códigos clínicamente relacionados; ruido no tiene SNOMED diagnóstico equivalente en el Challenge.
+- Los registros sin ninguna de las 12 etiquetas se conservan por defecto como vectores all-zero. Pueden excluirse con `--drop_no_selected_labels`.
+
+---
+
+## Instalación
+
+```bash
+pip install -r requirements.txt
 ```
+
+Para CUDA, instale PyTorch según su entorno. Este repositorio incluye una referencia para CUDA 12.8:
+
+```bash
+pip install -r requirements-cuda.txt
+```
+
+---
+
+## Descargar CINC2020
+
+```bash
+bash descargar_datos_2020.sh
+```
+
+Subconjuntos descargados desde `training/`:
+
+- `cpsc_2018`;
+- `cpsc_2018_extra`;
+- `georgia`;
+- `ptb`;
+- `ptb-xl`;
+- `st_petersburg_incart`.
+
+---
+
+## Construir datasets HDF5
+
+```bash
+python examples/cinc2020/build_datasets.py \
+  --data_dir dataset2020 \
+  --output_dir data/cinc2020_12 \
+  --workers 6 \
+  --chunksize 8 \
+  --write_batch_size 32
+```
+
+Salida esperada:
+
+```text
+data/cinc2020_12/
+├── train.h5
+├── val.h5
+├── test.h5
+├── class_mapping_12.csv
+├── label_distribution.csv
+├── source_distribution.csv
+├── split_summary.csv
+├── split_assignments.csv
+├── preprocessing_summary.json
+└── signal_processing_summary.json
+```
+
+Cada HDF5 contiene:
+
+```text
+signals -> (N, 5000, 12)
+labels  -> (N, 12)
+```
+
+Las señales se remuestrean a 500 Hz, se normalizan por derivación con z-score y se recortan/rellenan hasta 5000 muestras.
+
+---
+
+## Entrenar ResNet-34 tipo Hannun
+
+```bash
+python -m ecg.train examples/cinc2020/config.json -e cinc2020_resnet
+```
+
+Los artefactos quedan en:
+
+```text
+saved/cinc2020/cinc2020_resnet/<run>/
+├── best.pt
+├── latest.pt
+├── config_used.json
+├── history.csv
+└── training_summary.json
+```
+
+---
+
+## Entrenar CNN convencional equivalente
+
+```bash
+python -m ecg.train examples/cinc2020/config_regular_cnn.json -e cinc2020_cnn
+```
+
+Esta CNN mantiene el calendario de convoluciones, filtros y downsampling, pero elimina las conexiones residuales. Sirve para una comparación justa frente a ResNet.
+
+---
+
+## Evaluar
+
+```bash
+python examples/cinc2020/evaluate.py \
+  examples/cinc2020/config.json \
+  saved/cinc2020/cinc2020_resnet/<run>/best.pt \
+  --output-dir results/cinc2020_12_resnet
+```
+
+Métricas guardadas:
+
+```text
+results/cinc2020_12_resnet/
+├── thresholds_validation.csv
+├── metrics_per_class.csv
+├── metrics_global.csv
+├── predictions_validation.csv
+├── predictions_test.csv
+├── confusion_matrices_validation.csv
+├── confusion_matrices_test.csv
+├── confusion_matrices/
+│   ├── validation/
+│   └── test/
+└── evaluation_summary.json
+```
+
+Métricas incluidas:
+
+- AUROC por clase;
+- AUPRC por clase;
+- sensibilidad/recall;
+- especificidad;
+- precisión;
+- F1 por clase;
+- F1 macro/micro;
+- matrices de confusión 2x2 por clase.
+
+Los thresholds se optimizan solo en validation y luego se aplican al test.
+
+Para cuantificar el postprocesamiento normal opcional en todo el conjunto, ejecútelo explícitamente en evaluación. Esta regla añade `NSR` solo cuando ninguna clase supera su umbral y `P(NSR)` alcanza el mínimo elegido; no modifica probabilidades ni pesos del modelo:
+
+```bash
+python examples/cinc2020/evaluate.py \
+  examples/cinc2020/config.json \
+  saved/cinc2020/cinc2020_resnet/<run>/best.pt \
+  --output-dir results/cinc2020_12_resnet_fallback \
+  --normal-fallback-min-prob 0.40
+```
+
+---
+
+## Depurar un registro individual
+
+Para revisar casos como `E00001`, compare el preprocesamiento de la webapp contra el HDF5 usado en evaluación:
+
+```bash
+python examples/cinc2020/debug_record_prediction.py \
+  --config examples/cinc2020/config.json \
+  --checkpoint saved/cinc2020/cinc2020_resnet/<run>/best.pt \
+  --record E00001 \
+  --hea training/georgia/g1/E00001.hea \
+  --mat training/georgia/g1/E00001.mat \
+  --thresholds results/cinc2020_12_resnet/thresholds_validation.csv
+```
+
+Si la señal webapp y la señal HDF5 coinciden, la mala predicción es del checkpoint/umbral/postprocesamiento; si difieren, hay que corregir lectura, normalización, remuestreo, padding/recorte u orden de derivaciones y regenerar HDF5.
+
+---
+
+## Comparar ResNet vs CNN convencional
+
+```bash
+python examples/cinc2020/compare_models.py \
+  --resnet results/cinc2020_12_resnet \
+  --cnn results/cinc2020_12_cnn \
+  --output results/cinc2020_12/model_comparison.csv
+```
+
+---
+
+## Robustez controlada
+
+```bash
+python examples/cinc2020/robustness.py \
+  saved/cinc2020/cinc2020_resnet/<run>/best.pt \
+  data/cinc2020_12/test.h5 \
+  --thresholds results/cinc2020_12_resnet/thresholds_validation.csv \
+  --output results/cinc2020_12_resnet/robustness.csv
+```
+
+Perturbaciones:
+
+- ruido gaussiano;
+- baseline wander;
+- escalado de amplitud;
+- dropout de derivaciones.
+
+---
+
+## Webapp
+
+La app puede ejecutarse sin configurar variables de entorno. Por defecto selecciona automáticamente el mejor checkpoint `best.pt` disponible dentro de `saved/` o de la carpeta indicada con `--saved`:
+
+```bash
+python webapp/app.py --saved saved
+```
+
+Si necesita fijar un checkpoint exacto para una demostración reproducible, puede hacerlo por CLI, pero la interfaz web no requiere ni muestra selector de modelo:
+
+```bash
+python webapp/app.py --model saved/cinc2020/cinc2020_resnet/<run>/best.pt
+```
+
+Si los umbrales quedaron en una ruta no estándar, puede pasarlos explícitamente:
+
+```bash
+python webapp/app.py --saved saved --thresholds results/cinc2020_12_resnet/thresholds_validation.csv
+```
+
+La app incluye un fallback normal opcional para demos: si ninguna clase supera su umbral y `P(NSR) >= 0.40`, añade `NSR` como decisión final postprocesada. Para desactivarlo:
+
+```bash
+python webapp/app.py --saved saved --normal-fallback-min-prob 0
+```
+
+Opcionalmente también puede usar la entrada WSGI:
+
+```bash
+python webapp/wsgi.py --saved saved
+```
+
+La interfaz acepta:
+
+- CSV de 12 derivaciones;
+- par WFDB `.hea + .mat` de un mismo registro.
+
+Cuando se sube `.hea + .mat`, la app lee el header, preprocesa la señal a 500 Hz / 5000 muestras / 12 derivaciones, compara automáticamente contra las etiquetas reales del campo `Dx` y genera un CSV convertido descargable. Para CSV puede escribir clases o códigos SNOMED reales manualmente para activar la comparación. La pantalla usa un dashboard con secciones de carga, resultado, detalle técnico y experimentos; muestra resultados multilabel, probabilidades por clase, comparación real vs predicho, trazado ECG con papel milimetrado, PDF, métricas exportadas, cambio ES/EN y resultados de comparación/robustez cuando existen en `results/`. Si existe `thresholds_validation.csv` generado por evaluación, la app usa automáticamente umbrales por clase en lugar del respaldo global 0.5.
+
+---
+
+## Dataset sintético para smoke tests
+
+Si desea verificar que la estructura ejecuta sin descargar CINC2020:
+
+```bash
+python examples/cinc2020/make_syntethic.py
+python -m ecg.train examples/cinc2020/config_syntethic.json -e smoke_test --epochs 1 --device cpu --no-amp
+```
+
+No use el dataset sintético para reportar métricas científicas.
+
+---
+
+## Diferencias frente a Hannun et al.
+
+1. Se reemplaza el dataset privado Zio Patch/iRhythm por CINC2020.
+2. Se usan ECG de 12 derivaciones.
+3. Las etiquetas se definen con SNOMED-CT agrupado en 12 clases.
+4. El problema se conserva multilabel; no se fuerza una clase única.
+5. La evaluación usa métricas por clase y matrices 2x2 independientes.
+
+---
+
+## Estado del código
+
+La rama original `SNOMED_CINC` estaba orientada a 27 clases puntuadas del Challenge. Esta versión reorganiza el código en la estructura canónica `ecg/`, `examples/`, `webapp/` y adapta el pipeline a 12 clases agrupadas, manteniendo sigmoid + `BCEWithLogitsLoss`.

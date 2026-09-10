@@ -1,9 +1,0 @@
-model,class,precision,recall,f1,n_true,n_pred,tp
-ResNet-34,A,0.8592,0.8026,0.8299,76,71,61
-ResNet-34,N,0.9021,0.9429,0.922,508,531,479
-ResNet-34,O,0.8059,0.7893,0.7975,242,237,191
-ResNet-34,~,0.7333,0.3929,0.5116,28,15,11
-CNN convencional,A,0.0,0.0,0.0,76,0,0
-CNN convencional,N,0.5946,0.9961,0.7447,508,851,506
-CNN convencional,O,0.3333,0.0041,0.0082,242,3,1
-CNN convencional,~,0.0,0.0,0.0,28,0,0

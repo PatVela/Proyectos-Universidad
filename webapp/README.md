@@ -1,462 +1,171 @@
-# ECG Web App Flask
+# Webapp ECG CINC2020-12
 
-Aplicación web interactiva para clasificar señales ECG de **una sola derivación** usando checkpoints PyTorch entrenados con el paquete `ecg/` del repositorio.
+Aplicación Flask tipo dashboard para analizar ECG de 12 derivaciones con el modelo multilabel CINC2020-12.
 
-La app está pensada para acompañar el trabajo experimental sobre **PhysioNet/CinC2017**:
+## Funcionalidades
 
-- muestra la predicción por intervalos de 256 muestras;
-- muestra la distribución de clases del registro;
-- permite descargar un informe PDF;
-- muestra métricas reales del modelo;
-- muestra la comparación **ResNet-34 vs CNN convencional**;
-- muestra el análisis de **robustez**;
-- compara automáticamente contra las etiquetas reales de `REFERENCE-v3.csv` cuando el archivo subido conserva el ID oficial del registro.
+- Carga por arrastrar/seleccionar archivo.
+- Soporte para CSV de 12 derivaciones.
+- Soporte para par WFDB `.hea + .mat` del mismo registro.
+- Conversión automática del par `.hea + .mat` a CSV preprocesado descargable.
+- Selección automática del mejor checkpoint disponible en la carpeta `saved/` configurada.
+- Predicción multilabel con probabilidades por clase.
+- Uso automático de `thresholds_validation.csv` si existe; si no, usa threshold global de respaldo.
+- Trazado ECG con cuadrícula tipo papel milimetrado.
+- Reporte PDF generado en servidor.
+- Cambio de idioma Español/Inglés desde la interfaz.
+- Comparación con etiquetas reales:
+  - automática desde el campo `Dx` cuando se sube `.hea + .mat`;
+  - manual para CSV mediante clases o códigos SNOMED separados por coma.
+- Detalle técnico del registro, checkpoint, threshold, preprocesamiento y comparación real vs predicho.
+- Sección de métricas y experimentos si existen archivos en `results/`.
 
----
+## Ejecutar sin variables de entorno
 
-## Requisitos
-
-Desde la raíz del proyecto:
-
-```bash
-pip install -r requirements.txt
-```
-
-Necesitas al menos un checkpoint `.pt`, por ejemplo entrenado con:
-
-```bash
-python -m ecg.train examples/cinc17/config.json \
-  -e cinc17_resnet \
-  --seed 2018
-```
-
-Opcionalmente, para comparación automática con etiqueta real, necesitas el archivo oficial:
-
-```text
-REFERENCE-v3.csv
-```
-
----
-
-## Ejecutar en desarrollo
-
-### Usar la ResNet-34 principal
-
-```bash
-python webapp/app.py \
-  --saved saved/cinc17_resnet \
-  --reference dataset2017/REFERENCE-v3.csv \
-  --host 127.0.0.1 \
-  --port 5000
-```
-
-Abre:
-
-```text
-http://127.0.0.1:5000/
-```
-
-### Usar un checkpoint exacto
-
-```bash
-python webapp/app.py \
-  --model saved/cinc17_resnet/<timestamp>/<checkpoint>.pt \
-  --reference dataset2017/REFERENCE-v3.csv
-```
-
-### Usar la CNN convencional
-
-```bash
-python webapp/app.py \
-  --saved saved/cinc17_cnn \
-  --reference dataset2017/REFERENCE-v3.csv
-```
-
-### Elegir automáticamente el mejor checkpoint global
+Desde la raíz del proyecto, la opción recomendada es dejar que la app elija automáticamente el mejor checkpoint dentro de `saved/`:
 
 ```bash
 python webapp/app.py --saved saved
 ```
 
-> Si `saved/` contiene tanto ResNet como CNN, la app elegirá el checkpoint con menor `val_loss` dentro de toda la carpeta. Para demostraciones científicas, se recomienda usar `--model` exacto o `--saved saved/cinc17_resnet`.
-
----
-
-## Modelo usado en la pestaña Resultado
-
-La pestaña **Resultado** usa únicamente el modelo cargado en `PredictionService` al arrancar Flask.
-
-| Comando | Modelo usado en Resultado |
-|---|---|
-| `--saved saved/cinc17_resnet` | ResNet-34. |
-| `--saved saved/cinc17_cnn` | CNN convencional. |
-| `--model ruta/checkpoint.pt` | Exactamente ese checkpoint. |
-| `--saved saved` | Mejor checkpoint global por menor `val_loss`. |
-
-La interfaz muestra el modelo usado para cada predicción, por ejemplo:
-
-```text
-Modelo usado para este resultado: ResNet-34
-```
-
----
-
-## Comparación automática con etiqueta real
-
-Si la app se inicia con:
+También puede usar una carpeta específica:
 
 ```bash
---reference dataset2017/REFERENCE-v3.csv
+python webapp/app.py --saved saved/cinc2020
 ```
 
-entonces carga el CSV oficial de etiquetas reales:
-
-```text
-A00001,N
-A00002,N
-A00003,N
-A00004,A
-...
-```
-
-Cuando subes un archivo cuyo nombre contiene el ID oficial, la app lo compara automáticamente:
-
-```text
-A00004.mat  -> busca A00004 en REFERENCE-v3.csv
-A00004.dat  -> busca A00004 en REFERENCE-v3.csv
-A00004.csv  -> busca A00004 en REFERENCE-v3.csv
-A00004_filtrado.npy -> busca A00004 en REFERENCE-v3.csv
-```
-
-En **Resultado** se muestra:
-
-```text
-Etiqueta real: Fibrilación auricular (A)
-Predicción: Fibrilación auricular (A)
-✔ Predicción correcta
-```
-
-o, si no coincide:
-
-```text
-Etiqueta real: Normal (N)
-Predicción: Otro ritmo (O)
-✘ Predicción distinta a la etiqueta real
-```
-
-Si el archivo no conserva el ID oficial, puedes usar el campo manual:
-
-```text
-Diagnóstico conocido (opcional)
-```
-
-Acepta valores como:
-
-```text
-N, A, O, ~
-Normal, AF, Otro, Ruido
-```
-
-### Rutas donde se busca automáticamente `REFERENCE-v3.csv`
-
-Si no pasas `--reference`, la app intenta encontrarlo en:
-
-```text
-dataset2017/REFERENCE-v3.csv
-training2017/REFERENCE-v3.csv
-data/REFERENCE-v3.csv
-examples/cinc17/REFERENCE-v3.csv
-REFERENCE-v3.csv
-```
-
----
-
-## Secciones de la interfaz
-
-### 1. Cargar ECG
-
-Permite:
-
-- arrastrar o seleccionar archivo;
-- escribir datos opcionales de paciente;
-- escribir diagnóstico conocido manualmente;
-- usar ejemplos sintéticos rápidos;
-- seleccionar derivación si el archivo tiene varios canales.
-
-### 2. Resultado
-
-Muestra:
-
-- ritmo predominante;
-- confianza media del ritmo predominante;
-- distribución de clases;
-- modelo usado para la predicción;
-- comparación con etiqueta real si está disponible;
-- ECG interactivo con bandas de color por intervalo;
-- tabla de clasificación por tramos;
-- descarga de informe PDF.
-
-### 3. Detalle Técnico
-
-Muestra:
-
-- arquitectura cargada: ResNet-34 o CNN convencional;
-- clases reconocidas;
-- número de parámetros;
-- checkpoint e ID del modelo;
-- métricas exportadas por `evaluate.py`;
-- matriz de confusión y F1 por clase si existen las imágenes.
-
-Para generar esas métricas:
+Para una demostración reproducible puede fijar un checkpoint exacto por CLI. La interfaz web no muestra selector de modelo:
 
 ```bash
-python examples/cinc17/evaluate.py \
-  --data_json examples/cinc17/dev.json \
-  --saved saved/cinc17_resnet \
-  --save_metrics_dir webapp/static/metrics
+python webapp/app.py --model saved/cinc2020/cinc2020_resnet/<run>/best.pt
 ```
 
-### 4. Experimentos
-
-Muestra automáticamente resultados ya calculados de:
-
-1. **ResNet-34 vs CNN convencional**.
-2. **Robustez frente a perturbaciones ECG**.
-
-La app no entrena ni evalúa todo el dataset desde el navegador; solo lee archivos generados previamente.
-
----
-
-## Generar resultados para la pestaña Experimentos
-
-### Comparación ResNet vs CNN
-
-```bash
-python examples/cinc17/compare_models.py \
-  --data_json examples/cinc17/dev.json \
-  --resnet_saved saved/cinc17_resnet \
-  --cnn_saved saved/cinc17_cnn \
-  --out_dir results/cinc17/resnet_vs_cnn
-```
-
-La app lee:
-
-```text
-results/cinc17/resnet_vs_cnn/comparison_metrics.json
-```
-
-### Robustez ResNet
-
-```bash
-python examples/cinc17/robustness.py \
-  --data_json examples/cinc17/dev.json \
-  --saved saved/cinc17_resnet \
-  --out_dir results/cinc17/robustness_resnet \
-  --seed 1234
-```
-
-La app lee:
-
-```text
-results/cinc17/robustness_resnet/robustness_metrics.json
-```
-
-### Robustez CNN
-
-```bash
-python examples/cinc17/robustness.py \
-  --data_json examples/cinc17/dev.json \
-  --saved saved/cinc17_cnn \
-  --out_dir results/cinc17/robustness_cnn \
-  --seed 1234
-```
-
-La app lee:
-
-```text
-results/cinc17/robustness_cnn/robustness_metrics.json
-```
-
----
-
-## Formatos de entrada admitidos
-
-| Formato | Detalle |
-|---|---|
-| CSV fila | `300,12.0,12.1,...`; primer valor = frecuencia de muestreo. |
-| CSV columna | una muestra por fila; si no hay frecuencia, asume 300 Hz. |
-| `.mat` | lee la variable `val` si existe; preserva múltiples derivaciones. |
-| `.dat` | PhysioNet formato 212. |
-| `.npy` | array 1-D o 2-D. |
-
-Si el archivo tiene varias derivaciones, la app pide elegir una antes de inferir.
-
----
-
-## Re-muestreo automático
-
-El modelo se entrena con CinC2017 a **300 Hz**. Si subes una señal a otra frecuencia, la app la re-muestrea automáticamente a 300 Hz con `scipy.signal.resample` y lo indica en pantalla.
-
-Esto evita que el modelo interprete los latidos con una escala temporal incorrecta.
-
----
-
-## Informe PDF
-
-El botón **Descargar informe (PDF)** genera un PDF real en servidor mediante ReportLab.
-
-Incluye:
-
-- paciente y edad, si se ingresan;
-- fecha;
-- ritmo predominante;
-- confianza;
-- etiqueta real y coincidencia, si está disponible;
-- parámetros del registro;
-- distribución de clases;
-- imagen del ECG con predicción por tramos.
-
-Los archivos subidos se guardan con nombre temporal y se eliminan al terminar la predicción.
-
----
-
-## Ejecutar en producción
-
-El servidor de desarrollo de Flask no debe usarse en producción. Usa WSGI.
-
-### Linux/macOS/servidor con gunicorn
-
-```bash
-pip install gunicorn
-
-export ECG_SAVED="saved/cinc17_resnet"
-export ECG_REFERENCE="dataset2017/REFERENCE-v3.csv"
-# o usa un checkpoint exacto:
-# export ECG_MODEL="saved/cinc17_resnet/<timestamp>/<checkpoint>.pt"
-
-gunicorn -w 2 -b 0.0.0.0:5000 --timeout 120 "webapp.wsgi:app"
-```
-
-### Windows con waitress
-
-PowerShell:
-
-```powershell
-$env:ECG_SAVED = "saved/cinc17_resnet"
-$env:ECG_REFERENCE = "dataset2017/REFERENCE-v3.csv"
-waitress-serve --listen=*:5000 "webapp.wsgi:app"
-```
-
-`webapp/wsgi.py` lee:
-
-| Variable | Descripción |
-|---|---|
-| `ECG_SAVED` | Carpeta de checkpoints. |
-| `ECG_MODEL` | Checkpoint exacto; tiene prioridad sobre `ECG_SAVED`. |
-| `ECG_REFERENCE` | Ruta opcional a `REFERENCE-v3.csv`. |
-
----
-
-## Acceso desde otra máquina
-
-Para acceso en red local:
+Si el archivo de umbrales está en una ruta no estándar, páselo explícitamente:
 
 ```bash
 python webapp/app.py \
-  --saved saved/cinc17_resnet \
-  --reference dataset2017/REFERENCE-v3.csv \
+  --saved saved \
+  --thresholds results/cinc2020_12_resnet/thresholds_validation.csv
+```
+
+Al iniciar, la consola imprime la ruta de thresholds detectada y los valores de `LVH` y `NSR`.
+
+Para demos puede dejar activo el fallback normal: si ninguna clase supera su umbral calibrado y `P(NSR) >= 0.40`, la salida final añade `NSR` como postprocesamiento explícito. No cambia las probabilidades del modelo ni debe reportarse como mejora de entrenamiento. Para desactivarlo:
+
+```bash
+python webapp/app.py \
+  --saved saved \
+  --thresholds results/cinc2020_12_resnet/thresholds_validation.csv \
+  --normal-fallback-min-prob 0
+```
+
+Parámetros útiles:
+
+```bash
+python webapp/app.py \
+  --saved saved \
+  --uploads webapp/uploads \
+  --results webapp/results \
   --host 0.0.0.0 \
-  --port 5000
+  --port 5002
 ```
 
-Luego abre desde otro dispositivo:
+## Formato CSV
+
+El CSV debe contener las 12 derivaciones estándar como columnas:
 
 ```text
-http://<IP-de-tu-PC>:5000/
+I,II,III,aVR,aVL,aVF,V1,V2,V3,V4,V5,V6
 ```
 
-Recuerda permitir el puerto en el firewall.
+Opcionalmente puede empezar con una línea de frecuencia:
 
-Para una demo por internet sin configurar servidor público, puedes usar túnel HTTPS:
+```text
+# Sampling Rate: 500 Hz
+```
+
+Si no se indica frecuencia, se asume 500 Hz.
+
+Para comparar contra etiquetas reales en CSV, use el campo opcional de la interfaz con clases o SNOMED:
+
+```text
+NSR, AF
+426783006,164889003
+```
+
+## Formato WFDB
+
+Seleccione ambos archivos del mismo registro:
+
+```text
+A0001.hea
+A0001.mat
+```
+
+La app valida que el stem coincida, lee el header, carga la señal, aplica el mismo preprocesamiento del pipeline, compara predicción vs `Dx` y genera un CSV convertido descargable.
+
+## Resultados experimentales en la interfaz
+
+La sección de métricas se completa al generar:
 
 ```bash
-./webapp/run_public.sh
+python examples/cinc2020/evaluate.py \
+  examples/cinc2020/config.json \
+  saved/cinc2020/cinc2020_resnet/<run>/best.pt \
+  --output-dir results/cinc2020_12_resnet
 ```
 
----
+Ese comando también crea `thresholds_validation.csv`. Si el archivo existe, la webapp lo detecta automáticamente y usa umbrales por clase, que suelen ser más adecuados que 0.5 en problemas multilabel desbalanceados.
 
-## HTTPS y seguridad
-
-La app aplica cabeceras de seguridad desde `app.py`:
-
-- `Content-Security-Policy`
-- `X-Frame-Options: DENY`
-- `X-Content-Type-Options: nosniff`
-- `Referrer-Policy`
-- `Permissions-Policy`
-- `Cache-Control: no-store`
-- `Strict-Transport-Security` solo cuando se sirve por HTTPS.
-
-Opciones de HTTPS:
+Para evaluar el efecto del fallback NSR en el conjunto completo, úselo explícitamente en evaluación:
 
 ```bash
-./webapp/run_https.sh
+python examples/cinc2020/evaluate.py \
+  examples/cinc2020/config.json \
+  saved/cinc2020/cinc2020_resnet/<run>/best.pt \
+  --output-dir results/cinc2020_12_resnet_fallback \
+  --normal-fallback-min-prob 0.40
 ```
 
-O usa nginx/caddy/Render/Heroku/Railway delante del WSGI.
+Para depurar un registro individual y comparar la señal de la webapp contra la señal guardada en HDF5:
 
-> Privacidad: no subas ECG reales ni datos personales a una demo pública sin las autorizaciones correspondientes.
-
----
-
-## Endpoints
-
-| Ruta | Método | Descripción |
-|---|---:|---|
-| `/` | GET | Interfaz principal. |
-| `/predict` | POST | Clasifica una señal subida por multipart, campo `file`; opcional `label` y `channel`. |
-| `/example` | POST | Genera y clasifica señal sintética: `normal`, `af` o `noise`. |
-| `/report.pdf` | POST | Genera PDF desde el análisis actual. |
-| `/models` | GET | Lista checkpoints disponibles y checkpoint activo. |
-| `/use_model` | POST | Cambia checkpoint activo sin reiniciar; JSON `{ "model": "ruta_relativa.pt" }`. |
-| `/metrics` | GET | Devuelve `webapp/static/metrics/metrics.json` si existe. |
-| `/experiments` | GET | Devuelve comparación ResNet/CNN y robustez si existen en `results/cinc17/`. |
-| `/reference` | GET | Estado de `REFERENCE-v3.csv`; permite consultar `?record=A00004`. |
-
-Ejemplos:
-
-```text
-http://127.0.0.1:5000/metrics
-http://127.0.0.1:5000/experiments
-http://127.0.0.1:5000/reference?record=A00004
+```bash
+python examples/cinc2020/debug_record_prediction.py \
+  --config examples/cinc2020/config.json \
+  --checkpoint saved/cinc2020/cinc2020_resnet/<run>/best.pt \
+  --record E00001 \
+  --hea training/georgia/g1/E00001.hea \
+  --mat training/georgia/g1/E00001.mat \
+  --thresholds results/cinc2020_12_resnet/thresholds_validation.csv
 ```
 
----
+La sección de comparación se completa con:
 
-## Estructura
-
-```text
-webapp/
-├── app.py              # Flask, rutas, seguridad, carga de métricas/experimentos/reference
-├── prediction.py       # PredictionService, resampling, lectura de señales y gráficos
-├── report_pdf.py       # generación del informe PDF
-├── make_sample_csv.py  # genera CSV sintético de ejemplo
-├── wsgi.py             # entrada WSGI; lee ECG_SAVED, ECG_MODEL, ECG_REFERENCE
-├── run_https.sh        # demo HTTPS con certificado autofirmado o propio
-├── run_public.sh       # túnel HTTPS para demo pública
-├── templates/
-│   └── index.html
-└── static/
-    ├── app.js
-    ├── style.css
-    ├── plotly.min.js
-    └── metrics/        # metrics.json + figuras de evaluate.py, si se generan
+```bash
+python examples/cinc2020/compare_models.py \
+  --resnet results/cinc2020_12_resnet \
+  --cnn results/cinc2020_12_cnn \
+  --output results/cinc2020_12/model_comparison.csv
 ```
 
----
+La sección de robustez se completa con:
 
-## Notas para GitHub
+```bash
+python examples/cinc2020/robustness.py \
+  saved/cinc2020/cinc2020_resnet/<run>/best.pt \
+  data/cinc2020_12/test.h5 \
+  --thresholds results/cinc2020_12_resnet/thresholds_validation.csv \
+  --output results/cinc2020_12/robustness.csv
+```
 
-- No incluyas checkpoints grandes si exceden las políticas del repositorio; considera Git LFS o publicar un release.
-- No incluyas el dataset completo de CinC2017 si la licencia/acuerdo de PhysioNet no lo permite.
-- Para reproducibilidad, sube scripts, configuraciones y reportes CSV/JSON/Markdown generados en `results/`, si el tamaño es razonable.
+## Mejoras implementadas
+
+- Validación de combinación de archivos en cliente y servidor.
+- Botón de limpieza para reiniciar la carga y los paneles.
+- Guardado persistente de tema claro/oscuro e idioma en el navegador.
+- Comparación multilabel por registro con TP, FP, FN, F1 y Jaccard.
+- PDF con resumen técnico, probabilidades, comparación real vs predicho y trazado.
+
+## Nota
+
+La webapp es una herramienta académica. Las predicciones no constituyen diagnóstico médico.

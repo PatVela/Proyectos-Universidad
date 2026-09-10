@@ -3,15 +3,16 @@
 """
 check_dataset2020.py
 
-Valida los archivos HDF5 generados por src/data2020.py.
+Valida los archivos HDF5 generados por examples/cinc2020/build_datasets.py
+usando ecg/load.py.
 
 Estructura esperada:
 
-    TIF-Biomedica/
+    proyecto/
     ├── dataset2020/
-    ├── dataset2020_procesado/
-    ├── src/
-    │   ├── data2020.py
+    ├── data/cinc2020_12/
+    ├── ecg/
+    │   ├── load.py
     │   └── ...
     └── check_dataset2020.py
 
@@ -54,13 +55,14 @@ PROJECT_ROOT = os.path.dirname(
 
 DATASET_DIR = os.path.join(
     PROJECT_ROOT,
-    "dataset2020_procesado"
+    "data",
+    "cinc2020_12"
 )
 
 EXPECTED_FS = 500
 EXPECTED_LENGTH = 5000
 EXPECTED_LEADS_COUNT = 12
-EXPECTED_CLASSES = 27
+EXPECTED_CLASSES = 12
 
 EXPECTED_LEADS = [
     "I",
@@ -90,7 +92,7 @@ HDF5_FILES = [
     "train.h5",
     "val.h5",
     "test.h5",
-    "incart_external.h5",
+
 ]
 
 # Número de registros de señal que se inspeccionan en profundidad.
@@ -781,7 +783,7 @@ def validate_h5(
             print()
             print("ETIQUETAS")
 
-            # 27 x N normalmente es pequeño
+            # 12 x N normalmente es pequeño
             # comparado con las señales.
             label_array = labels[:]
 

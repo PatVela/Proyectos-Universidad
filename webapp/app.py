@@ -1,552 +1,524 @@
-"""Interactive ECG classification web app (Flask) for the PyTorch port of
-awni/ecg (Hannun et al., Nature Medicine 2019), trained on PhysioNet CinC2017.
+"""Webapp Flask para ECG CINC2020-12.
 
-Run (from the project root, virtualenv active):
-    python webapp/app.py --model saved/cinc17/<ts>/<best>.pt
-    # or auto-select the best (lowest val_loss) checkpoint:
-    python webapp/app.py --saved saved
-    # custom port / host:
-    python webapp/app.py --saved saved --port 5000 --host 0.0.0.0
+La interfaz conserva una vista tipo dashboard: carga, resultado, detalle técnico,
+PDF y experimentos. El checkpoint se resuelve automáticamente buscando un
+best.pt dentro de saved/; también puede fijarse por CLI para despliegues.
 """
 
-from __future__ import absolute_import
+from __future__ import annotations
 
 import argparse
-import csv
+import hashlib
 import json
-import logging
 import os
 import sys
-import threading
-import uuid
+from datetime import datetime
+from pathlib import Path
+from typing import Any
 
-# Make the `ecg` package importable regardless of CWD
-_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-if _REPO_ROOT not in sys.path:
-    sys.path.insert(0, _REPO_ROOT)
-# make sibling modules (prediction) importable when loaded as a package
-_WEBAPP = os.path.dirname(os.path.abspath(__file__))
-if _WEBAPP not in sys.path:
-    sys.path.insert(0, _WEBAPP)
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-from flask import Flask, render_template, request, jsonify
-from werkzeug.utils import secure_filename
+from flask import Flask, jsonify, render_template, request, send_from_directory, url_for
 
-import prediction as pred_mod
-import project_info as proj
-import report_pdf
-
-logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')
-log = logging.getLogger('ecg-webapp')
-
-app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = 64 * 1024 * 1024   # 64 MB uploads
-app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(__file__), 'uploads')
+from ecg import load, util
+from webapp import project_info as proj
+from webapp.prediction import clean_path_text, resolve_model_path, run_prediction_from_uploads
+from webapp.report_pdf import build_pdf_report
 
 
-@app.after_request
-def add_security_headers(resp):
-    """Security hardening. TLS itself is terminated by the reverse proxy or the
-    waitress/gunicorn SSL options (see webapp/README.md 'Seguridad'); here we set
-    browser security headers and enable HSTS only when serving over HTTPS."""
-    resp.headers['X-Content-Type-Options'] = 'nosniff'
-    resp.headers['X-Frame-Options'] = 'DENY'
-    resp.headers['Referrer-Policy'] = 'no-referrer'
-    resp.headers['X-XSS-Protection'] = '1; mode=block'
-    resp.headers['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=()'
-    resp.headers['Content-Security-Policy'] = (
-        "default-src 'self'; "
-        "img-src 'self' data: blob:; "
-        "style-src 'self' 'unsafe-inline'; "
-        "script-src 'self'; "
-        "connect-src 'self'; "
-        "font-src 'self'; "
-        "frame-ancestors 'none'")
-    resp.headers['Cache-Control'] = 'no-store'
-    # enable HSTS only if we are actually serving HTTPS (proxy or direct TLS)
-    if request.is_secure or request.headers.get('X-Forwarded-Proto') == 'https':
-        resp.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
-    return resp
-
-SERVICE = None          # current PredictionService
-SERVICE_LOCK = threading.Lock()
-MODELS_DIR = 'saved'
-REFERENCE_LABELS = {}   # {record_id -> true CinC2017 label}, loaded from REFERENCE-v3.csv
-REFERENCE_PATH = None
+DEFAULT_UPLOADS = REPO_ROOT / "webapp" / "uploads"
+DEFAULT_RESULTS = REPO_ROOT / "webapp" / "results"
+DEFAULT_SAVED = REPO_ROOT / "saved"
 
 
-def _jsonable(result):
-    """Drop non-JSON-serialisable payloads (numpy arrays) before responding."""
-    out = dict(result)
-    out.pop('probs', None)
-    return out
+def _resolve_dir_env(name: str, default: Path) -> Path:
+    value = clean_path_text(os.environ.get(name, ""))
+    path = Path(value) if value else default
+    if not path.is_absolute():
+        path = REPO_ROOT / path
+    path.mkdir(parents=True, exist_ok=True)
+    return path.resolve()
 
 
-def _sanitize(err):
-    """Return a short, client-safe error message (no internal paths/stack)."""
-    text = str(err)
-    # strip anything that looks like a path
-    for frag in [os.path.abspath(os.curdir), _REPO_ROOT, '\\n', 'Traceback']:
-        text = text.replace(frag, '...')
-    return text[:300]
+def _jsonable(value: Any):
+    try:
+        import numpy as np
+        if isinstance(value, (np.integer,)):
+            return int(value)
+        if isinstance(value, (np.floating,)):
+            return None if np.isnan(value) else float(value)
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+    except Exception:
+        pass
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, dict):
+        return {k: _jsonable(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_jsonable(v) for v in value]
+    return value
 
 
-def _normalize_label(label):
-    """Map human labels or CinC2017 labels to the canonical class code."""
-    if label is None:
-        return ''
-    raw = str(label).strip()
-    key = raw.lower()
-    mapping = {
-        'n': 'N', 'normal': 'N', 'ritmo normal': 'N',
-        'a': 'A', 'af': 'A', 'fa': 'A', 'fibrilacion': 'A',
-        'fibrilación': 'A', 'fibrilacion auricular': 'A',
-        'fibrilación auricular': 'A',
-        'o': 'O', 'otro': 'O', 'other': 'O', 'otro ritmo': 'O',
-        '~': '~', 'ruido': '~', 'noise': '~', 'artefacto': '~',
-        '|': '|', 'sin clasificar': '|', 'unclassified': '|',
-    }
-    return mapping.get(key, raw.upper())
+def _short_model_id(model_path: str | Path | None) -> str:
+    if not model_path:
+        return ""
+    path = Path(model_path)
+    if not path.exists():
+        return ""
+    h = hashlib.sha256()
+    try:
+        with path.open("rb") as handle:
+            for block in iter(lambda: handle.read(1 << 20), b""):
+                h.update(block)
+        return h.hexdigest()[:10]
+    except OSError:
+        return ""
 
 
-def _record_id_from_filename(filename):
-    """Extract a CinC2017 record id from an uploaded filename.
-
-    Examples: A00001.mat -> A00001, A00001.dat -> A00001,
-    A00001.csv -> A00001. If a user uploads a converted file with suffixes, the
-    first token before '-'/'_' is also tried.
-    """
-    name = secure_filename(filename or '')
-    stem = os.path.splitext(os.path.basename(name))[0].upper()
-    if not stem:
-        return ''
-    # direct official format
-    if stem.startswith('A') and len(stem) >= 6 and stem[1:6].isdigit():
-        return stem[:6]
-    # tolerate names such as A00001_export.csv or A00001-filtered.npy
-    for sep in ('_', '-', ' '):
-        token = stem.split(sep)[0]
-        if token.startswith('A') and len(token) >= 6 and token[1:6].isdigit():
-            return token[:6]
-    return stem
-
-
-def _candidate_reference_paths(explicit=None):
-    """Candidate locations for REFERENCE-v3.csv, in priority order."""
-    paths = []
-    for p in (explicit, os.environ.get('ECG_REFERENCE')):
-        if p:
-            paths.append(p)
-    paths.extend([
-        os.path.join(_REPO_ROOT, 'dataset2017', 'REFERENCE-v3.csv'),
-        os.path.join(_REPO_ROOT, 'training2017', 'REFERENCE-v3.csv'),
-        os.path.join(_REPO_ROOT, 'data', 'REFERENCE-v3.csv'),
-        os.path.join(_REPO_ROOT, 'examples', 'cinc17', 'REFERENCE-v3.csv'),
-        os.path.join(_REPO_ROOT, 'REFERENCE-v3.csv'),
-    ])
-    # Arena/local attachment fallback; harmless outside this environment.
-    paths.append(os.path.join(os.path.expanduser('~'), 'uploads', 'REFERENCE-v3.csv'))
-    return paths
-
-
-def _load_reference_csv(path):
-    labels = {}
-    with open(path, 'r', encoding='utf-8-sig', newline='') as f:
-        reader = csv.reader(f)
-        for row in reader:
-            if len(row) < 2:
-                continue
-            rec = row[0].strip().upper()
-            lab = _normalize_label(row[1])
-            if not rec or rec in ('RECORD', 'RECORDING') or not lab:
-                continue
-            labels[rec] = lab
-    return labels
-
-
-def _init_reference(reference_csv=None):
-    """Load REFERENCE-v3.csv if available. The app still works without it."""
-    global REFERENCE_LABELS, REFERENCE_PATH
-    REFERENCE_LABELS = {}
-    REFERENCE_PATH = None
-    for path in _candidate_reference_paths(reference_csv):
-        path = os.path.abspath(path)
-        if not os.path.exists(path):
-            continue
-        try:
-            labels = _load_reference_csv(path)
-        except Exception as e:
-            log.warning('No se pudo leer REFERENCE-v3.csv (%s): %s', path, e)
-            continue
-        if labels:
-            REFERENCE_LABELS = labels
-            REFERENCE_PATH = path
-            log.info('Etiquetas reales cargadas: %d registros desde %s',
-                     len(REFERENCE_LABELS), REFERENCE_PATH)
-            return labels
-    log.info('No se encontró REFERENCE-v3.csv; comparación automática desactivada.')
-    return {}
-
-
-def _lookup_reference_label(filename):
-    rec = _record_id_from_filename(filename)
-    if not rec:
-        return None, None
-    return rec, REFERENCE_LABELS.get(rec)
-
-
-def _model_train_date(path):
-    """Return the checkpoint file's modification date (ISO) as an estimate of
-    the training finish time; empty string if not available."""
+def _model_train_date(path: str | Path | None) -> str:
     if not path:
-        return ''
+        return ""
     try:
-        import datetime
-        return datetime.datetime.fromtimestamp(os.path.getmtime(path)).strftime(
-            '%Y-%m-%d %H:%M')
-    except (OSError, ValueError):
-        return ''
+        return datetime.fromtimestamp(Path(path).stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+    except OSError:
+        return ""
 
 
-def _load_metrics_json():
-    path = os.path.join(os.path.dirname(__file__), 'static', 'metrics', 'metrics.json')
-    if not os.path.exists(path):
-        return None
-    try:
-        with open(path, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return None
+def _list_checkpoints(saved_dir: str | Path) -> list[Path]:
+    saved = Path(clean_path_text(saved_dir) or DEFAULT_SAVED)
+    if not saved.is_absolute():
+        saved = REPO_ROOT / saved
+    checkpoints = util.find_checkpoints(saved)
 
-
-def _load_json_if_exists(path):
-    if not os.path.exists(path):
-        return None
-    try:
-        with open(path, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return None
-
-
-def _load_experiment_results():
-    """Load optional experiment outputs generated by compare_models.py and
-    robustness.py so the Flask app can display research results when present."""
-    root = os.path.join(_REPO_ROOT, 'results', 'cinc17')
-    comparison_path = os.path.join(root, 'resnet_vs_cnn', 'comparison_metrics.json')
-    robustness_paths = {
-        'ResNet-34': os.path.join(root, 'robustness_resnet', 'robustness_metrics.json'),
-        'CNN convencional': os.path.join(root, 'robustness_cnn', 'robustness_metrics.json'),
-    }
-    out = {
-        'comparison_path': comparison_path,
-        'comparison': _load_json_if_exists(comparison_path),
-        'robustness': {},
-        'robustness_paths': robustness_paths,
-    }
-    # Backward-compatible fallback if the user keeps the default out_dir from
-    # robustness.py instead of the named robustness_resnet folder.
-    fallback = os.path.join(root, 'robustness', 'robustness_metrics.json')
-    for name, path in robustness_paths.items():
-        data = _load_json_if_exists(path)
-        if data is None and name == 'ResNet-34':
-            data = _load_json_if_exists(fallback)
-            if data is not None:
-                path = fallback
-        if data is not None:
-            out['robustness'][name] = data
-    return out
-
-
-@app.route('/metrics', methods=['GET'])
-def metrics_status():
-    path = os.path.join(os.path.dirname(__file__), 'static', 'metrics', 'metrics.json')
-    return jsonify({
-        'file_found': os.path.exists(path),
-        'path': path,
-        'metrics': _load_metrics_json(),
-    })
-
-
-@app.route('/reference', methods=['GET'])
-def reference_status():
-    """Return REFERENCE-v3.csv status and optionally the true label for ?record=."""
-    record = (request.args.get('record') or '').strip()
-    record = _record_id_from_filename(record) if record else ''
-    return jsonify({
-        'ok': True,
-        'file_found': bool(REFERENCE_LABELS),
-        'path': REFERENCE_PATH,
-        'count': len(REFERENCE_LABELS),
-        'record': record or None,
-        'label': REFERENCE_LABELS.get(record) if record else None,
-    })
-
-
-@app.route('/experiments', methods=['GET'])
-def experiments_status():
-    exp = _load_experiment_results()
-    return jsonify({
-        'comparison_found': exp['comparison'] is not None,
-        'comparison_path': exp['comparison_path'],
-        'robustness_found': {k: True for k in exp['robustness']},
-        'robustness_paths': exp['robustness_paths'],
-        'experiments': exp,
-    })
-
-
-@app.route('/')
-def index():
-    info = SERVICE.info() if SERVICE is not None else None
-    checkpoints = pred_mod.list_checkpoints(MODELS_DIR)
-    # Number of trainable parameters in the loaded model (for the arch sheet).
-    n_params = None
-    if SERVICE is not None:
+    def score(path: Path):
         try:
-            n_params = sum(p.numel() for p in SERVICE.model.parameters())
+            ckpt = util.load_checkpoint(path, map_location="cpu")
+            val = ckpt.get("val_loss")
+            if val is not None:
+                return (0, float(val), str(path))
         except Exception:
-            n_params = None
-    return render_template(
-        'index.html', model_info=info,
-        checkpoints=[os.path.relpath(p, MODELS_DIR) for p in checkpoints],
-        models_dir=MODELS_DIR,
-        project=proj.PROJECT_INFO, reference=proj.REFERENCE,
-        model_train_date=(_model_train_date(SERVICE.model_path)
-                          if SERVICE and SERVICE.model_path else ''),
-        model_hash=pred_mod._short_model_id(SERVICE.model_path)
-        if SERVICE and SERVICE.model_path else '',
-        model_n_params=n_params,
-        reference_path=REFERENCE_PATH,
-        reference_count=len(REFERENCE_LABELS),
-        metrics=_load_metrics_json(),
-        experiments=_load_experiment_results())
-
-
-@app.route('/models', methods=['GET'])
-def list_models():
-    rel = [os.path.relpath(p, MODELS_DIR) for p in pred_mod.list_checkpoints(MODELS_DIR)]
-    return jsonify({'ok': True, 'models': rel, 'current': os.path.relpath(
-        SERVICE.model_path, MODELS_DIR) if SERVICE else None})
-
-
-@app.route('/use_model', methods=['POST'])
-def use_model():
-    """Switch the loaded checkpoint without restarting the server."""
-    global SERVICE
-    data = request.get_json(silent=True) or {}
-    rel = data.get('model', '')
-    path = os.path.join(MODELS_DIR, rel) if rel else pred_mod.find_best_model(MODELS_DIR)
-    path = os.path.abspath(path)
-    if not os.path.exists(path):
-        return jsonify({'ok': False, 'error': 'No existe el checkpoint: ' + rel}), 404
-    try:
-        svc = pred_mod.PredictionService(path)
-    except Exception as e:
-        return jsonify({'ok': False, 'error': _sanitize(e)}), 400
-    with SERVICE_LOCK:
-        SERVICE = svc
-    log.info("Modelo cambiado a %s", path)
-    return jsonify({'ok': True, 'info': svc.info()})
-
-
-@app.route('/predict', methods=['POST'])
-def predict():
-    if SERVICE is None:
-        return jsonify({'ok': False, 'error': 'No hay modelo cargado.'}), 500
-
-    file = request.files.get('file')
-    if file is None or file.filename == '':
-        return jsonify({'ok': False, 'error': 'Selecciona un archivo.'}), 400
-
-    # unique temporary name so concurrent uploads never collide; clean up after.
-    ext = os.path.splitext(file.filename)[1].lower()
-    if ext not in ('.csv', '.mat', '.dat', '.npy', ''):
-        return jsonify({'ok': False,
-                        'error': 'Formato no soportado (usa CSV, .mat, .dat o .npy).'}), 400
-    tmp_name = uuid.uuid4().hex + ext
-    tmp_path = os.path.join(app.config['UPLOAD_FOLDER'], tmp_name)
-    os.makedirs(os.path.dirname(tmp_path), exist_ok=True)
-    file.save(tmp_path)
-
-    manual_label_raw = (request.form.get('label') or '').strip()
-    manual_label = _normalize_label(manual_label_raw) if manual_label_raw else ''
-    record_id, reference_label = _lookup_reference_label(file.filename)
-    true_label = manual_label or reference_label
-    label_source = 'manual' if manual_label else ('REFERENCE-v3.csv' if reference_label else None)
-    try:
-        info = pred_mod.load_signal(tmp_path, file.filename)
-        mat, n_channels, fs = info['mat'], info['n_channels'], info['fs']
-
-        # ---- multi-lead handling: require the user to choose a lead first ----
-        selected_channel = None
-        if n_channels > 1:
-            channel = (request.form.get('channel') or '').strip()
-            try:
-                idx = int(channel)
-            except (TypeError, ValueError):
-                idx = -1
-            if idx < 0 or idx >= n_channels:
-                return jsonify({
-                    'ok': True, 'requires_channel': True,
-                    'n_channels': n_channels,
-                    'channel_names': info['names'], 'fs': fs,
-                })
-            selected_channel = idx
-            signal = pred_mod.select_channel(mat, idx)
-        else:
-            signal = mat[0]
-
-        # NOTE: no start-trimming. The dark bar at the very start of the trace
-        # is Plotly's native Range Slider control (a UI element), NOT signal
-        # data, so the signal is analysed exactly as recorded.
-        result = SERVICE.predict_signal(fs, signal)
-        result['n_channels'] = n_channels
-        result['channel'] = (selected_channel + 1) if selected_channel is not None else 1
-        result['channel_name'] = (info['names'][selected_channel]
-                                  if selected_channel is not None else info['names'][0])
-        result['plot'] = 'data:image/png;base64,' + SERVICE.render_plot(fs, signal, result)
-        result['plotly'] = SERVICE.render_plotly(fs, signal, result)
-        result['models'] = [os.path.relpath(p, MODELS_DIR)
-                            for p in pred_mod.list_checkpoints(MODELS_DIR)]
-        result['info'] = SERVICE.info()
-        result['record_id'] = record_id
-        # Compare against a user-provided label or, if absent, the official
-        # REFERENCE-v3.csv label matched by filename (A00001.mat -> A00001).
-        if true_label:
-            result['ground_truth'] = {
-                'label': true_label,
-                'correct': true_label == result['dominant'] if true_label in SERVICE.classes else None,
-                'known_by_model': true_label in SERVICE.classes,
-                'source': label_source,
-                'record': record_id,
-            }
-    except Exception as e:
-        log.warning("Predicción fallida: %s", e)
-        return jsonify({'ok': False, 'error': _sanitize(e)}), 400
-    finally:
-        try:
-            os.remove(tmp_path)             # never persist uploads
-        except OSError:
             pass
+        return (1, path.stat().st_mtime if path.exists() else 0, str(path))
 
-    return jsonify({'ok': True, **_jsonable(result)})
-
-
-def _synthetic_signal(kind='normal', n=256 * 30):
-    """Generate a synthetic single-lead ECG-ish signal for quick demos.
-
-    kind: 'normal' (sinusoidal-ish regular), 'af' (irregular irregularity,
-    fibrillatory waves), 'noise' (predominantly noisy/artefact).
-    """
-    import numpy as np
-    t = np.arange(n) / pred_mod.TRAIN_FS
-    rng = np.random.default_rng(7)
-    base = 0.05 * np.sin(2 * np.pi * 1.2 * t)
-    base += 0.15 * np.sin(2 * np.pi * 1.3 * t).clip(min=0)
-    if kind == 'af':
-        # irregular RR + coarse fibrillatory waves (no clean P)
-        rr = 0.6 + 0.25 * np.sin(2 * np.pi * 0.35 * t)
-        base += 0.08 * np.sin(2 * np.pi * (5.0 + 1.5 * np.sin(2 * np.pi * 0.6 * t)) * t)
-        base += 0.06 * rng.normal(0, 1, n)
-        base *= 1.0 + 0.3 * rr
-    elif kind == 'noise':
-        base += 0.22 * rng.normal(0, 1, n)
-        base += 0.05 * np.sin(2 * np.pi * 50 * t)
-    else:
-        base += 0.02 * rng.normal(0, 1, n)
-    return (base + 0.0).astype(np.float32)
+    return sorted(checkpoints, key=score)
 
 
-@app.route('/report.pdf', methods=['POST'])
-def generate_report_pdf():
-    """Build and return a real, well-formatted A4 clinical report as a PDF.
-
-    The client posts the analysis (patient info + the base64 ECG PNG already
-    rendered for the interactive view) as JSON; we return application/pdf so
-    the browser downloads it automatically.
-    """
-    data = request.get_json(silent=True) or {}
+def _checkpoint_info(model_path: str | None, saved_dir: str | None) -> dict | None:
     try:
-        pdf = report_pdf.build_report(data, proj.PROJECT_INFO, proj.REFERENCE)
-    except Exception as e:
-        log.warning("Error generando el PDF del informe: %s", e)
-        return jsonify({'ok': False, 'error': _sanitize(e)}), 400
-    resp = app.response_class(pdf, mimetype='application/pdf')
-    resp.headers['Content-Disposition'] = \
-        "attachment; filename=informe_ecg.pdf"
-    resp.headers['Content-Length'] = str(len(pdf))
-    return resp
+        resolved = resolve_model_path(model_path=model_path, saved_dir=saved_dir)
+    except Exception as exc:
+        return {
+            "available": False,
+            "error": str(exc),
+            "model_path": "",
+            "model_type": "No cargado",
+            "classes": load.CLASS_NAMES,
+            "config": {},
+            "meta": {},
+            "num_parameters": None,
+        }
 
-
-@app.route('/example', methods=['POST'])
-def example():
-    """Generate a synthetic single-lead signal server-side and classify it.
-    `kind` selects the demo: normal | af | noise (default normal)."""
-    import numpy as np
-
-    if SERVICE is None:
-        return jsonify({'ok': False, 'error': 'No hay modelo cargado.'}), 500
-    kind = (request.get_json(silent=True) or {}).get('kind', 'normal')
-    if kind not in ('normal', 'af', 'noise'):
-        kind = 'normal'
-    n = 256 * 30
-    signal = _synthetic_signal(kind, n)
     try:
-        result = SERVICE.predict_signal(pred_mod.TRAIN_FS, signal)
-        result['n_channels'] = 1
-        result['channel'] = 1
-        result['channel_name'] = 'I'
-        result['plot'] = 'data:image/png;base64,' + SERVICE.render_plot(
-            pred_mod.TRAIN_FS, signal, result)
-        result['plotly'] = SERVICE.render_plotly(pred_mod.TRAIN_FS, signal, result)
-        result['models'] = [os.path.relpath(p, MODELS_DIR)
-                            for p in pred_mod.list_checkpoints(MODELS_DIR)]
-        result['info'] = SERVICE.info()
-    except Exception as e:
-        return jsonify({'ok': False, 'error': _sanitize(e)}), 400
-    return jsonify({'ok': True, **_jsonable(result)})
+        ckpt = util.load_checkpoint(resolved, map_location="cpu")
+        config = ckpt.get("config", {}) or {}
+        classes = ckpt.get("class_names") or load.CLASS_NAMES.copy()
+        state = ckpt.get("model_state_dict") or {}
+        n_params = None
+        if state:
+            try:
+                n_params = {
+                    "total": int(sum(v.numel() for v in state.values())),
+                    "trainable": int(sum(v.numel() for v in state.values())),
+                    "non_trainable": 0,
+                }
+            except Exception:
+                n_params = None
+        return {
+            "available": True,
+            "model_path": str(resolved),
+            "model_type": "CNN convencional equivalente" if config.get("is_regular_conv") else "ResNet-34 1D tipo Hannun",
+            "is_regular_conv": bool(config.get("is_regular_conv", False)),
+            "classes": classes,
+            "device": "auto",
+            "config": config,
+            "meta": {
+                "epoch": ckpt.get("epoch"),
+                "val_loss": ckpt.get("val_loss"),
+                "label_schema": ckpt.get("label_schema", "cinc2020_12_grouped_snomed"),
+                "problem_type": ckpt.get("problem_type", "multilabel_sigmoid_bce"),
+            },
+            "num_parameters": n_params,
+        }
+    except Exception as exc:
+        return {
+            "available": False,
+            "error": str(exc),
+            "model_path": str(resolved),
+            "model_type": "Checkpoint no legible",
+            "classes": load.CLASS_NAMES,
+            "config": {},
+            "meta": {},
+            "num_parameters": None,
+        }
 
 
-def _init_service(saved_dir='saved', model_path=None):
-    """Load (or reload) the PredictionService. Called by main() and by wsgi.py.
+def _resolve_model_for_display(model_path: str | None, saved_dir: str | None) -> str:
+    try:
+        return str(resolve_model_path(model_path=model_path, saved_dir=saved_dir))
+    except Exception:
+        return "No configurado o no encontrado"
 
-    Returns the PredictionService or exits if no model is found.
+
+def _relative_to_results(app: Flask, path_text: str | None) -> str | None:
+    if not path_text:
+        return None
+    path = Path(path_text).resolve()
+    root = Path(app.config["ECG_RESULTS_DIR"]).resolve()
+    try:
+        return str(path.relative_to(root)).replace("\\", "/")
+    except ValueError:
+        return path.name
+
+
+def _read_csv_records(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    import pandas as pd
+    df = pd.read_csv(path)
+    return _jsonable(df.to_dict(orient="records"))
+
+
+def _candidate_result_dirs() -> list[Path]:
+    return [
+        REPO_ROOT / "results" / "cinc2020_12_resnet",
+        REPO_ROOT / "results" / "cinc2020_12",
+        REPO_ROOT / "results" / "cinc2020_12_eval",
+    ]
+
+
+def _load_thresholds_for_app(model_path: str | None, saved_dir: str | None) -> tuple[dict | None, str | None]:
+    """Busca thresholds_validation.csv generado por evaluate.py.
+
+    Si existe, la webapp usa umbrales por clase en lugar del fallback global 0.5.
+    Esto reduce falsos positivos por clases desbalanceadas y hace la demo más
+    consistente con la evaluación final.
     """
-    global SERVICE, MODELS_DIR
-    MODELS_DIR = saved_dir
-    path = model_path or pred_mod.find_best_model(MODELS_DIR)
-    if not path:
-        log.error("No se encontró modelo. Entrena primero con "
-                  "`python ecg/train.py examples/cinc17/config.json -e cinc17` "
-                  "o pasa --model <checkpoint.pt>.")
-        sys.exit(1)
-    log.info("Cargando modelo: %s", path)
-    svc = pred_mod.PredictionService(path)
-    with SERVICE_LOCK:
-        SERVICE = svc
-    log.info("Clases: %s | Device: %s", svc.classes, svc.device)
-    return svc
+    candidates: list[Path] = []
+    try:
+        resolved = resolve_model_path(model_path=model_path, saved_dir=saved_dir)
+        candidates.extend([
+            resolved.parent / "thresholds_validation.csv",
+            resolved.parent.parent / "thresholds_validation.csv",
+        ])
+    except Exception:
+        pass
+    explicit_thresholds = clean_path_text(os.environ.get("ECG_THRESHOLDS", ""))
+    if explicit_thresholds:
+        p = Path(explicit_thresholds)
+        candidates.insert(0, p if p.is_absolute() else REPO_ROOT / p)
+
+    for folder in _candidate_result_dirs():
+        candidates.append(folder / "thresholds_validation.csv")
+
+    # Último respaldo robusto: buscar en cualquier subcarpeta de results/.
+    results_root = REPO_ROOT / "results"
+    if results_root.exists():
+        candidates.extend(sorted(results_root.rglob("thresholds_validation.csv"), key=lambda p: p.stat().st_mtime, reverse=True))
+
+    seen = set()
+    for path in candidates:
+        path = path.resolve()
+        if path in seen or not path.exists():
+            continue
+        seen.add(path)
+        try:
+            import pandas as pd
+            df = pd.read_csv(path)
+            if "class" not in df.columns or "threshold" not in df.columns:
+                continue
+            values = {str(row["class"]): float(row["threshold"]) for _, row in df.iterrows()}
+            if all(name in values for name in load.CLASS_NAMES):
+                return values, str(path)
+        except Exception:
+            continue
+    return None, None
 
 
-def main():
-    global SERVICE, MODELS_DIR
-    parser = argparse.ArgumentParser(description="ECG classification web app")
-    parser.add_argument("--model", help="path to a .pt checkpoint")
-    parser.add_argument("--saved", default="saved",
-                        help="directory with checkpoints (auto-selects the best)")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=5000)
-    parser.add_argument("--reference", default=None,
-                        help="path to CinC2017 REFERENCE-v3.csv for automatic real-label comparison")
-    args = parser.parse_args()
+def _load_metrics() -> dict:
+    candidates = _candidate_result_dirs()
+    for folder in candidates:
+        global_csv = folder / "metrics_global.csv"
+        per_class_csv = folder / "metrics_per_class.csv"
+        summary_json = folder / "evaluation_summary.json"
+        if not (global_csv.exists() or per_class_csv.exists() or summary_json.exists()):
+            continue
+        summary = None
+        if summary_json.exists():
+            try:
+                summary = json.loads(summary_json.read_text(encoding="utf-8"))
+            except Exception:
+                summary = None
+        per_class = _read_csv_records(per_class_csv)
+        per_class_test = [r for r in per_class if r.get("split") == "test"] or per_class
+        return {
+            "found": True,
+            "path": str(folder),
+            "global": _read_csv_records(global_csv),
+            "per_class": per_class,
+            "per_class_test": per_class_test,
+            "summary": _jsonable(summary),
+        }
+    return {"found": False, "path": "", "global": [], "per_class": [], "per_class_test": [], "summary": None}
 
-    _init_reference(args.reference)
-    _init_service(args.saved, args.model)
 
-    # Run Flask threaded so switching models / concurrent requests do not block.
-    app.run(host=args.host, port=args.port, debug=False, threaded=True)
+def _load_experiment_results() -> dict:
+    root = REPO_ROOT / "results" / "cinc2020_12"
+    comparison = _read_csv_records(root / "model_comparison.csv")
+    robustness_paths = [
+        root / "robustness.csv",
+        REPO_ROOT / "results" / "cinc2020_12_resnet" / "robustness.csv",
+        REPO_ROOT / "results" / "cinc2020_12_cnn" / "robustness.csv",
+    ]
+    robustness = []
+    robustness_path = ""
+    for path in robustness_paths:
+        rows = _read_csv_records(path)
+        if rows:
+            robustness = rows
+            robustness_path = str(path)
+            break
+    return {
+        "comparison_found": bool(comparison),
+        "comparison_path": str(root / "model_comparison.csv"),
+        "comparison": comparison,
+        "robustness_found": bool(robustness),
+        "robustness_path": robustness_path,
+        "robustness": robustness,
+    }
 
 
-if __name__ == '__main__':
+def create_app() -> Flask:
+    app = Flask(__name__)
+    app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024
+
+    app.config["ECG_MODEL"] = clean_path_text(os.environ.get("ECG_MODEL", ""))
+    app.config["ECG_SAVED_DIR"] = str(_resolve_dir_env("ECG_SAVED", DEFAULT_SAVED))
+    app.config["ECG_UPLOADS_DIR"] = str(_resolve_dir_env("ECG_UPLOADS", DEFAULT_UPLOADS))
+    app.config["ECG_RESULTS_DIR"] = str(_resolve_dir_env("ECG_RESULTS", DEFAULT_RESULTS))
+    app.config["ECG_REFERENCE"] = clean_path_text(os.environ.get("ECG_REFERENCE", ""))
+    app.config["ECG_THRESHOLDS"] = clean_path_text(os.environ.get("ECG_THRESHOLDS", ""))
+    app.config["ECG_NORMAL_FALLBACK_MIN_PROB"] = float(os.environ.get("ECG_NORMAL_FALLBACK_MIN_PROB", "0.40"))
+
+    @app.after_request
+    def add_security_headers(resp):
+        resp.headers["X-Content-Type-Options"] = "nosniff"
+        resp.headers["Referrer-Policy"] = "no-referrer"
+        resp.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
+    @app.get("/")
+    def index():
+        saved_dir = app.config["ECG_SAVED_DIR"]
+        model_path = app.config["ECG_MODEL"]
+        resolved_model = _resolve_model_for_display(model_path, saved_dir)
+        checkpoints = _list_checkpoints(saved_dir)
+        model_info = _checkpoint_info(model_path, saved_dir)
+        return render_template(
+            "index.html",
+            class_groups=load.CLASS_GROUPS_12,
+            model_info=model_info,
+            checkpoints=[str(p) for p in checkpoints],
+            checkpoint_options=[str(p.relative_to(REPO_ROOT)) if str(p).startswith(str(REPO_ROOT)) else str(p) for p in checkpoints],
+            model_path=model_path or "",
+            resolved_model=resolved_model,
+            saved_dir=saved_dir,
+            uploads_dir=app.config["ECG_UPLOADS_DIR"],
+            results_dir=app.config["ECG_RESULTS_DIR"],
+            reference_path=app.config["ECG_REFERENCE"],
+            num_classes=load.NUM_CLASSES,
+            num_leads=load.NUM_LEADS,
+            sampling_rate=load.TARGET_FS,
+            input_length=load.WINDOW_LENGTH,
+            window_seconds=load.WINDOW_SECONDS,
+            project=proj.PROJECT_INFO,
+            reference=proj.REFERENCE,
+            model_train_date=_model_train_date(resolved_model) if resolved_model != "No configurado o no encontrado" else "",
+            model_hash=_short_model_id(resolved_model) if resolved_model != "No configurado o no encontrado" else "",
+            metrics=_load_metrics(),
+            experiments=_load_experiment_results(),
+        )
+
+    @app.get("/models")
+    def models_route():
+        saved_dir = request.args.get("saved") or app.config["ECG_SAVED_DIR"]
+        checkpoints = _list_checkpoints(saved_dir)
+        return jsonify({
+            "ok": True,
+            "saved_dir": saved_dir,
+            "models": [str(p) for p in checkpoints],
+            "current": app.config["ECG_MODEL"] or None,
+        })
+
+    @app.post("/use_model")
+    def use_model_route():
+        data = request.get_json(silent=True) or {}
+        model = clean_path_text(data.get("model", ""))
+        if not model:
+            app.config["ECG_MODEL"] = ""
+            return jsonify({"ok": True, "model": "", "message": "Selección automática activada."})
+        try:
+            resolved = resolve_model_path(model_path=model, saved_dir=app.config["ECG_SAVED_DIR"])
+        except Exception as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 404
+        app.config["ECG_MODEL"] = str(resolved)
+        return jsonify({"ok": True, "model": str(resolved), "info": _checkpoint_info(str(resolved), app.config["ECG_SAVED_DIR"])})
+
+    @app.post("/predict")
+    def predict_route():
+        files = request.files.getlist("files")
+        if not files:
+            one = request.files.get("file")
+            files = [one] if one is not None else []
+        if not files or all(not getattr(f, "filename", "") for f in files):
+            return jsonify({"ok": False, "status": "error", "error": "Suba un CSV o el par .hea + .mat."}), 400
+
+        try:
+            threshold = float(request.form.get("threshold", 0.5))
+            if not (0.0 <= threshold <= 1.0):
+                raise ValueError("El threshold debe estar entre 0 y 1.")
+
+            class_thresholds, threshold_source = _load_thresholds_for_app(
+                app.config["ECG_MODEL"],
+                app.config["ECG_SAVED_DIR"],
+            )
+
+            result = run_prediction_from_uploads(
+                file_storages=files,
+                model_path=app.config["ECG_MODEL"],
+                saved_dir=app.config["ECG_SAVED_DIR"],
+                upload_root=app.config["ECG_UPLOADS_DIR"],
+                results_root=app.config["ECG_RESULTS_DIR"],
+                threshold=threshold,
+                reference_labels=clean_path_text(request.form.get("true_labels", "")),
+                thresholds=class_thresholds,
+                threshold_source=threshold_source,
+                normal_fallback_min_prob=app.config["ECG_NORMAL_FALLBACK_MIN_PROB"],
+            )
+            result["patient_name"] = clean_path_text(request.form.get("patient_name", ""))
+            result["patient_age"] = clean_path_text(request.form.get("patient_age", "")) or result.get("patient_age")
+            result["ok"] = True
+
+            if result.get("plot_path"):
+                result["plot_url"] = url_for(
+                    "result_file",
+                    filename=_relative_to_results(app, result["plot_path"]),
+                )
+            if result.get("converted_csv_path"):
+                result["converted_csv_url"] = url_for(
+                    "result_file",
+                    filename=_relative_to_results(app, result["converted_csv_path"]),
+                )
+
+            pdf_path = Path(app.config["ECG_RESULTS_DIR"]) / result["job_id"] / f"{result['record_name']}_reporte.pdf"
+            build_pdf_report(result, pdf_path)
+            result["pdf_path"] = str(pdf_path)
+            result["pdf_url"] = url_for(
+                "result_file",
+                filename=_relative_to_results(app, str(pdf_path)),
+            )
+            return jsonify(_jsonable(result))
+        except Exception as exc:
+            return jsonify({"ok": False, "status": "error", "error": str(exc)}), 500
+
+    @app.get("/results/<path:filename>")
+    def result_file(filename):
+        return send_from_directory(app.config["ECG_RESULTS_DIR"], filename, as_attachment=False)
+
+    @app.get("/metrics")
+    def metrics_status():
+        metrics = _load_metrics()
+        return jsonify({"ok": True, **metrics})
+
+    @app.get("/experiments")
+    def experiments_status():
+        experiments = _load_experiment_results()
+        return jsonify({"ok": True, **experiments})
+
+    @app.get("/health")
+    def health():
+        resolved = _resolve_model_for_display(app.config["ECG_MODEL"], app.config["ECG_SAVED_DIR"])
+        ths, ths_source = _load_thresholds_for_app(app.config["ECG_MODEL"], app.config["ECG_SAVED_DIR"])
+        return jsonify({
+            "status": "ok",
+            "ECG_MODEL": app.config["ECG_MODEL"],
+            "resolved_model": resolved,
+            "ECG_SAVED": app.config["ECG_SAVED_DIR"],
+            "ECG_UPLOADS": app.config["ECG_UPLOADS_DIR"],
+            "ECG_RESULTS": app.config["ECG_RESULTS_DIR"],
+            "thresholds_found": ths is not None,
+            "thresholds_source": ths_source,
+            "thresholds": ths,
+            "normal_fallback_min_probability": app.config["ECG_NORMAL_FALLBACK_MIN_PROB"],
+            "num_classes": load.NUM_CLASSES,
+            "accepted_uploads": [".csv", ".hea + .mat"],
+        })
+
+    return app
+
+
+app = create_app()
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Webapp CINC2020-12")
+    parser.add_argument("--model", default=None, help="Checkpoint .pt. Si se omite, se busca automáticamente en --saved.")
+    parser.add_argument("--saved", default=None, help="Directorio de checkpoints para búsqueda automática.")
+    parser.add_argument("--uploads", default=None, help="Directorio de archivos subidos.")
+    parser.add_argument("--results", default=None, help="Directorio de resultados generados.")
+    parser.add_argument("--reference", default=None, help="Referencia opcional para documentación interna.")
+    parser.add_argument("--thresholds", default=None, help="thresholds_validation.csv generado por evaluate.py. Si se omite, se busca automáticamente.")
+    parser.add_argument("--normal-fallback-min-prob", type=float, default=None, help="Si ninguna clase supera umbral, añadir NSR cuando P(NSR) sea al menos este valor. Use 0 para desactivar.")
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "5002")))
+    args = parser.parse_args(argv)
+
+    if args.model is not None:
+        os.environ["ECG_MODEL"] = clean_path_text(args.model)
+    if args.saved is not None:
+        os.environ["ECG_SAVED"] = clean_path_text(args.saved)
+    if args.uploads is not None:
+        os.environ["ECG_UPLOADS"] = clean_path_text(args.uploads)
+    if args.results is not None:
+        os.environ["ECG_RESULTS"] = clean_path_text(args.results)
+    if args.reference is not None:
+        os.environ["ECG_REFERENCE"] = clean_path_text(args.reference)
+    if args.thresholds is not None:
+        os.environ["ECG_THRESHOLDS"] = clean_path_text(args.thresholds)
+    if args.normal_fallback_min_prob is not None:
+        os.environ["ECG_NORMAL_FALLBACK_MIN_PROB"] = str(args.normal_fallback_min_prob)
+
+    runtime_app = create_app()
+    print("=" * 72)
+    print("WEBAPP CINC2020-12")
+    print("=" * 72)
+    print("Modelo CLI :", runtime_app.config["ECG_MODEL"] or "(auto)")
+    print("Resuelto   :", _resolve_model_for_display(runtime_app.config["ECG_MODEL"], runtime_app.config["ECG_SAVED_DIR"]))
+    _ths, _ths_source = _load_thresholds_for_app(runtime_app.config["ECG_MODEL"], runtime_app.config["ECG_SAVED_DIR"])
+    print("Búsqueda   :", runtime_app.config["ECG_SAVED_DIR"])
+    print("Thresholds :", _ths_source or "no encontrados; fallback global 0.5")
+    if _ths:
+        print("  LVH      :", _ths.get("LVH", "—"), "| NSR:", _ths.get("NSR", "—"))
+    print("Fallback N :", runtime_app.config["ECG_NORMAL_FALLBACK_MIN_PROB"], "(0 desactiva)")
+    print("Subidas    :", runtime_app.config["ECG_UPLOADS_DIR"])
+    print("Resultados :", runtime_app.config["ECG_RESULTS_DIR"])
+    print("URL        :", f"http://{args.host}:{args.port}")
+    print("=" * 72)
+    runtime_app.run(host=args.host, port=args.port, debug=False, threaded=True)
+
+
+if __name__ == "__main__":
     main()

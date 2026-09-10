@@ -1,3 +1,0 @@
-model,architecture,model_path,parameters_total,training_minutes,best_epoch,accuracy,macro_f1,weighted_f1,challenge_f1,mean_majority_confidence
-ResNet-34,ResNet-34,C:\Users\juerg\Investigacion\TIF-Biomedica\saved\cinc17_resnet\1788946337-545\0.353-0.868-019-0.234-0.922.pt,10462276,63.41967826286952,19,0.8689,0.7653,0.8651,0.8498,0.9663
-CNN convencional,CNN convencional,C:\Users\juerg\Investigacion\TIF-Biomedica\saved\cinc17_cnn\1788950621-545\1.031-0.584-009-0.961-0.598.pt,10462276,15.951219566663106,9,0.5937,0.1882,0.4453,0.2509,0.9944
