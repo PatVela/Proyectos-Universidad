@@ -6,12 +6,14 @@ del proyecto::
     ecg/load.py
 
 Responsabilidades:
-    - definición del esquema SNOMED agrupado a 12 clases;
-    - lectura de headers WFDB ``.hea`` y señales ``.mat``;
+    - definición del esquema SNOMED agrupado a 12 clases (v2: cubre las 27
+      clases puntuadas del Challenge 2020);
+    - lectura de headers WFDB ``.hea`` y señales ``.mat`` (incluye ganancia
+      ADC y baseline por derivación);
     - reordenamiento de 12 derivaciones;
     - remuestreo a 500 Hz;
-    - normalización z-score por derivación;
-    - padding/recorte a 5000 muestras;
+    - conversión a unidades físicas (mV) + clip (por defecto) o z-score;
+    - padding/recorte a 5000 muestras o ventanas deslizantes;
     - construcción de HDF5 train/val/test con split multilabel estratificado.
 """
 
@@ -21,6 +23,7 @@ import argparse
 import glob
 import json
 import os
+import re
 from concurrent.futures import ProcessPoolExecutor
 from fractions import Fraction
 from multiprocessing import freeze_support
@@ -30,7 +33,7 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 from scipy.io import loadmat
-from scipy.signal import resample_poly
+from scipy.signal import butter, resample_poly, sosfiltfilt
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -48,32 +51,57 @@ NUM_LEADS = len(STANDARD_LEAD_ORDER)
 
 
 # ---------------------------------------------------------------------------
-# Esquema de etiquetas: 12 clases agrupadas por SNOMED-CT.
+# Esquema de etiquetas: 12 clases agrupadas por SNOMED-CT (v2).
+#
+# La v1 mapeaba ~40 códigos y dejaba ~21% de registros CINC2020 como vectores
+# all-zero (LBBB, TInv, IRBBB, Brady genérica, NSSTTA, STD/STE, LQT, OldMI,
+# isquemias, etc. quedaban sin clase), además de ignorar 13 de las 27 clases
+# puntuadas oficiales del Challenge 2020. Eso introduce ruido de etiquetas
+# masivo: ECG claramente anormales etiquetados como "nada", y clases como TAb
+# entrenadas con TAb=0 para la mayoría de las anomalías ST-T reales.
+#
+# La v2 agrupa códigos clínicamente relacionados para cubrir las 27 clases
+# puntuadas oficiales
+# (https://github.com/physionetchallenges/evaluation-2020/blob/master/dx_mapping_scored.csv)
+# manteniendo 12 salidas. All-zero esperado: <1% (solo diagnósticos
+# no-ECG como HF/HVD/CHD o WPW aislado).
 # ---------------------------------------------------------------------------
+LABEL_SCHEMA = "cinc2020_12_grouped_snomed_v2"
+LEGACY_LABEL_SCHEMA = "cinc2020_12_grouped_snomed"
+
 CLASS_GROUPS_12 = [
     {
         "name": "NSR",
-        "display_name": "Normal sinus rhythm",
-        "description": "Ritmo sinusal normal.",
-        "codes": ["426783006"],
+        "display_name": "Sinus rhythm (normal / arrhythmia)",
+        "description": "Ritmo sinusal normal o arritmia sinusal benigna.",
+        "codes": ["426783006", "427393009"],
     },
     {
-        "name": "LAD",
-        "display_name": "Left axis deviation",
-        "description": "Desviación del eje a la izquierda.",
-        "codes": ["39732003"],
+        "name": "AxisDev",
+        "display_name": "Cardiac axis deviation group",
+        "description": "Desviación del eje (LAD/RAD/indeterminado) y bloqueos fasciculares.",
+        "codes": ["39732003", "445118002", "47665007", "445211001", "251200008"],
     },
     {
         "name": "MI",
-        "display_name": "Myocardial infarction",
-        "description": "Infarto de miocardio.",
-        "codes": ["164865005"],
+        "display_name": "Myocardial infarction / ischemia group",
+        "description": "Infarto (incluye antiguo/anterior/agudo), isquemia y Q anormal.",
+        "codes": [
+            "164865005", "57054005", "164867002", "54329005",
+            "164861001", "413444003", "413844008", "426434006",
+            "425419005", "425623009", "164917005",
+        ],
     },
     {
         "name": "TAb",
-        "display_name": "T-wave abnormality",
-        "description": "Anormalidad de onda T.",
-        "codes": ["164934002"],
+        "display_name": "ST-T / repolarization abnormality group",
+        "description": "Anomalías ST-T y de repolarización (TAb/TInv/NSSTTA/STD/STE/QT).",
+        "codes": [
+            "164934002", "59931005", "428750005", "429622005",
+            "164931005", "164930006", "55930002", "704997005",
+            "111975006", "77867006", "164937009", "251259000",
+            "428417006",
+        ],
     },
     {
         "name": "AF",
@@ -86,26 +114,32 @@ CLASS_GROUPS_12 = [
     },
     {
         "name": "LVH",
-        "display_name": "Left ventricular hypertrophy",
-        "description": "Hipertrofia ventricular izquierda.",
-        "codes": ["164873001"],
+        "display_name": "Ventricular hypertrophy / enlargement group",
+        "description": "Hipertrofia/crecimiento ventricular y auricular, strain.",
+        "codes": [
+            "164873001", "370365005", "446813000", "67741000119109",
+            "253352002", "195126007", "89792004", "266249003",
+            "253339007", "446358003",
+        ],
     },
     {
         "name": "VEctopy",
-        "display_name": "Ventricular ectopy group",
-        "description": "Extrasístoles/ectopia ventricular.",
+        "display_name": "Ventricular ectopy / tachycardia group",
+        "description": "Ectopia ventricular y taquiarritmias ventriculares (TV/FV incluidas para no etiquetarlas como sanas).",
         "codes": [
             "427172004", "17338001", "164884008", "11157007",
             "251180001", "251182009", "75532003", "81898007",
+            "164895002", "425856008", "164896001", "111288001",
+            "49260003", "13640000",
         ],
     },
     {
         "name": "AVBlock",
-        "display_name": "Atrioventricular block group",
-        "description": "Bloqueos auriculoventriculares.",
+        "display_name": "Atrioventricular / sinoatrial block group",
+        "description": "Bloqueos AV (incluye PR prolongado) y sinoauriculares.",
         "codes": [
             "270492004", "195042002", "233917008", "27885002",
-            "54016002", "204384007",
+            "54016002", "204384007", "164947007", "65778007",
         ],
     },
     {
@@ -115,28 +149,65 @@ CLASS_GROUPS_12 = [
         "codes": ["427084000"],
     },
     {
-        "name": "RBBB",
-        "display_name": "Right bundle branch block group",
-        "description": "Bloqueo de rama derecha; fusiona RBBB y CRBBB.",
-        "codes": ["59118001", "713427006"],
+        "name": "BBB",
+        "display_name": "Bundle branch block / QRS abnormality group",
+        "description": "Bloqueos de rama (der/izq, completos/incompletos), conducción inespecífica y QRS anormal/bajo voltaje.",
+        "codes": [
+            "59118001", "713427006", "713426002", "164909002",
+            "251120003", "6374002", "698252002", "82226007",
+            "251146004", "164951009",
+        ],
     },
     {
         "name": "SB",
-        "display_name": "Sinus bradycardia",
-        "description": "Bradicardia sinusal.",
-        "codes": ["426177001"],
+        "display_name": "Bradycardia group",
+        "description": "Bradicardia sinusal/genérica, disfunción sinusal y síndrome bradi-taqui.",
+        "codes": ["426177001", "426627000", "60423000", "74615001"],
     },
     {
         "name": "AEctopy_Junctional",
-        "display_name": "Atrial ectopy / junctional rhythm group",
-        "description": "Ectopia auricular, supraventricular y ritmos de unión.",
+        "display_name": "Atrial ectopy / junctional / SVT / pacing group",
+        "description": "Ectopia auricular/supraventricular, ritmos de unión, TSV y ritmos de marcapasos.",
         "codes": [
             "284470004", "63593006", "713422000", "426664006",
             "29320008", "426995002", "251164006", "426648003",
             "195101003", "251268003", "251170000", "251168009",
-            "251173003",
+            "251173003", "426761007", "67198005", "10370003",
+            "251266004",
         ],
     },
+]
+
+# Esquema v1 conservado solo para auditoría/migración de checkpoints antiguos.
+CLASS_GROUPS_12_V1_LEGACY = [
+    {"name": "NSR", "codes": ["426783006"]},
+    {"name": "LAD", "codes": ["39732003"]},
+    {"name": "MI", "codes": ["164865005"]},
+    {"name": "TAb", "codes": ["164934002"]},
+    {"name": "AF", "codes": ["164889003", "164890007", "195080001", "282825002", "426749004", "314208002"]},
+    {"name": "LVH", "codes": ["164873001"]},
+    {"name": "VEctopy", "codes": ["427172004", "17338001", "164884008", "11157007", "251180001", "251182009", "75532003", "81898007"]},
+    {"name": "AVBlock", "codes": ["270492004", "195042002", "233917008", "27885002", "54016002", "204384007"]},
+    {"name": "STach", "codes": ["427084000"]},
+    {"name": "RBBB", "codes": ["59118001", "713427006"]},
+    {"name": "SB", "codes": ["426177001"]},
+    {"name": "AEctopy_Junctional", "codes": ["284470004", "63593006", "713422000", "426664006", "29320008", "426995002", "251164006", "426648003", "195101003", "251268003", "251170000", "251168009", "251173003"]},
+]
+LEGACY_CLASS_NAMES = [g["name"] for g in CLASS_GROUPS_12_V1_LEGACY]
+
+# Las 27 clases puntuadas oficiales del Challenge 2020 (dx_mapping_scored.csv).
+# Cada entrada: (código SNOMED, abreviatura). Útil para mapear grupos -> códigos
+# oficiales en examples/cinc2020/challenge_score.py.
+SCORED_27_CODES = [
+    ("270492004", "IAVB"), ("164889003", "AF"), ("164890007", "AFL"),
+    ("426627000", "Brady"), ("713427006", "CRBBB"), ("713426002", "IRBBB"),
+    ("445118002", "LAnFB"), ("39732003", "LAD"), ("164909002", "LBBB"),
+    ("251146004", "LQRSV"), ("698252002", "NSIVCB"), ("10370003", "PR"),
+    ("284470004", "PAC"), ("427172004", "PVC"), ("164947007", "LPR"),
+    ("111975006", "LQT"), ("164917005", "QAb"), ("47665007", "RAD"),
+    ("59118001", "RBBB"), ("427393009", "SA"), ("426177001", "SB"),
+    ("426783006", "NSR"), ("427084000", "STach"), ("63593006", "SVPB"),
+    ("164934002", "TAb"), ("59931005", "TInv"), ("17338001", "VPB"),
 ]
 
 CLASS_NAMES = [group["name"] for group in CLASS_GROUPS_12]
@@ -159,22 +230,25 @@ CODE_TO_CLASS_NAME = {
 
 EXCLUDED_GROUPS = [
     {
-        "name": "TSV",
-        "reason": "No alcanza 1000 ECGs en CINC2020 incluso agrupando códigos clínicamente relacionados.",
-    },
-    {
-        "name": "TV",
-        "reason": "No alcanza 1000 ECGs en CINC2020 incluso agrupando códigos clínicamente relacionados.",
-    },
-    {
         "name": "WPW",
-        "reason": "No alcanza 1000 ECGs en CINC2020 incluso agrupando códigos clínicamente relacionados.",
+        "reason": "WPW/preexcitación (74390002, 195060002) es muy infrecuente en CINC2020 y morfológicamente singular; queda fuera del esquema v2.",
+    },
+    {
+        "name": "NonECG_Diagnoses",
+        "reason": "Diagnósticos clínicos no-ECG (p.ej. HF 84114007, HVD 368009, CHD 53741008, TIA 266257000) no describen morfología del trazado.",
     },
     {
         "name": "Noise",
         "reason": "Ruido no tiene código SNOMED-CT diagnóstico equivalente en el Challenge 2020.",
     },
 ]
+
+# Normalización por defecto del esquema v2.
+DEFAULT_NORM_MODE = "physical"
+PHYSICAL_CLIP_MV = 5.0
+DEFAULT_ADC_GAIN = 1000.0
+BANDPASS_LO_HZ = 0.5
+BANDPASS_HI_HZ = 50.0
 
 
 # ---------------------------------------------------------------------------
@@ -242,6 +316,25 @@ def class_groups_as_records() -> list[dict]:
 codes_to_12_vector = codes_to_vector
 
 
+def preprocessing_for_schema(label_schema: str | None) -> dict:
+    """Devuelve parámetros de preprocesamiento compatibles con un checkpoint.
+
+    - Esquema v2 (o desconocido/nuevo): ``physical`` + bandpass.
+    - Esquema v1 legacy: ``per_lead_zscore`` sin bandpass.
+
+    Usar SIEMPRE esta función en inferencia (webapp/predict) para no mezclar
+    un checkpoint v1 con preprocesamiento v2 (o viceversa), lo que produce
+    predicciones basura silenciosas.
+    """
+    if label_schema == LEGACY_LABEL_SCHEMA:
+        return {"norm_mode": "per_lead_zscore", "bandpass": False}
+    return {"norm_mode": DEFAULT_NORM_MODE, "bandpass": True}
+
+
+def is_legacy_schema(label_schema: str | None) -> bool:
+    return str(label_schema or "") == LEGACY_LABEL_SCHEMA
+
+
 # ---------------------------------------------------------------------------
 # Lectores ECG / preprocesamiento de señal.
 # ---------------------------------------------------------------------------
@@ -277,6 +370,15 @@ def parse_header(hea_path: str | Path) -> dict:
 
     lead_names = [normalize_lead_name(lines[i].split()[-1]) for i in range(1, num_leads + 1)]
 
+    adc_gains: list[float] = []
+    adc_baselines: list[float] = []
+    adc_units: list[str] = []
+    for i in range(1, num_leads + 1):
+        gain, baseline, units = parse_adc_spec(lines[i])
+        adc_gains.append(gain)
+        adc_baselines.append(baseline)
+        adc_units.append(units)
+
     age = np.nan
     sex = "Unknown"
     dx_codes: list[str] = []
@@ -304,10 +406,51 @@ def parse_header(hea_path: str | Path) -> dict:
         "sampling_freq": sampling_freq,
         "num_samples": num_samples,
         "lead_names": lead_names,
+        "adc_gains": adc_gains,
+        "adc_baselines": adc_baselines,
+        "adc_units": adc_units,
         "age": age,
         "sex": sex,
         "dx_codes": dx_codes,
     }
+
+
+def parse_adc_spec(lead_line: str) -> tuple[float, float, str]:
+    """Extrae (ganancia, baseline, unidades) de una línea de derivación WFDB.
+
+    Ejemplo: ``A0001.mat 16+24 1000/mV 16 0 28 -1716 0 I`` -> (1000.0, 0.0, 'mV').
+    Acepta variantes como ``1000.0(0)/mV``. Si algo falla, usa ganancia 1000 y
+    baseline 0 (valores uniformes observados en los 6 subconjuntos CINC2020).
+    """
+    tokens = lead_line.split()
+    gain = DEFAULT_ADC_GAIN
+    baseline = 0.0
+    units = "mV"
+    try:
+        if len(tokens) >= 3:
+            match = re.match(r"([0-9.eE+-]+)(?:\\(([^)]*)\\))?(?:/(.*))?", tokens[2])
+            if match:
+                gain = float(match.group(1))
+                if match.group(2) not in (None, ""):
+                    try:
+                        baseline = float(match.group(2))
+                    except ValueError:
+                        pass
+                if match.group(3):
+                    units = match.group(3)
+        if len(tokens) >= 5:
+            # Quinto token = adc_zero (baseline digital). Prevalece si es numérico.
+            try:
+                baseline = float(tokens[4])
+            except ValueError:
+                pass
+    except (ValueError, IndexError):
+        pass
+    if not np.isfinite(gain) or gain == 0:
+        gain = DEFAULT_ADC_GAIN
+    if not np.isfinite(baseline):
+        baseline = 0.0
+    return float(gain), float(baseline), str(units)
 
 
 def reorder_leads(signal: np.ndarray, lead_names: Iterable[str]) -> np.ndarray:
@@ -337,7 +480,13 @@ def resample_signal(signal: np.ndarray, orig_fs: float, target_fs: int = TARGET_
 
 
 def normalize_signal(signal: np.ndarray) -> np.ndarray:
-    """Z-score por derivación, robusto frente a derivaciones constantes."""
+    """Z-score por derivación, robusto frente a derivaciones constantes.
+
+    Modo legacy (``per_lead_zscore``): elimina offsets por derivación pero
+    también destruye amplitudes absolutas (criterios de voltaje de LVH/LQRSV)
+    y relativas entre derivaciones (eje eléctrico). Se conserva solo para
+    compatibilidad con checkpoints entrenados con el esquema v1.
+    """
     signal = np.asarray(signal, dtype=np.float64)
     mean = np.nanmean(signal, axis=0, keepdims=True)
     std = np.nanstd(signal, axis=0, keepdims=True)
@@ -345,6 +494,108 @@ def normalize_signal(signal: np.ndarray) -> np.ndarray:
     signal = (signal - mean) / std
     signal = np.nan_to_num(signal, nan=0.0, posinf=0.0, neginf=0.0)
     return signal.astype(np.float32, copy=False)
+
+
+def normalize_signal_global(signal: np.ndarray) -> np.ndarray:
+    """Z-score global del registro (media/std sobre las 12 derivaciones).
+
+    Preserva amplitudes *relativas* entre derivaciones (eje eléctrico),
+    pero no absolutas. Intermedio entre ``per_lead_zscore`` y ``physical``.
+    """
+    signal = np.asarray(signal, dtype=np.float64)
+    mean = float(np.nanmean(signal))
+    std = float(np.nanstd(signal))
+    if not np.isfinite(mean):
+        mean = 0.0
+    if not np.isfinite(std) or std < 1e-8:
+        std = 1.0
+    signal = (signal - mean) / std
+    signal = np.nan_to_num(signal, nan=0.0, posinf=0.0, neginf=0.0)
+    return signal.astype(np.float32, copy=False)
+
+
+def to_physical_units(
+    signal: np.ndarray,
+    adc_gains: Iterable[float] | None = None,
+    adc_baselines: Iterable[float] | None = None,
+) -> np.ndarray:
+    """Convierte valores digitales WFDB a mV: ``(digital - baseline) / gain``.
+
+    En los 6 subconjuntos CINC2020 la ganancia es uniformemente 1000/mV con
+    baseline 0, pero se lee del header por robustez.
+    """
+    signal = np.asarray(signal, dtype=np.float64)
+    if adc_gains is None:
+        gains = np.full(signal.shape[1], DEFAULT_ADC_GAIN)
+    else:
+        gains = np.asarray(list(adc_gains), dtype=np.float64)
+    if adc_baselines is None:
+        baselines = np.zeros(signal.shape[1])
+    else:
+        baselines = np.asarray(list(adc_baselines), dtype=np.float64)
+    if gains.shape[0] != signal.shape[1] or baselines.shape[0] != signal.shape[1]:
+        raise ValueError(
+            f"Gains/baselines ({gains.shape[0]}) no coinciden con derivaciones ({signal.shape[1]})"
+        )
+    gains = np.where((~np.isfinite(gains)) | (gains == 0), DEFAULT_ADC_GAIN, gains)
+    baselines = np.where(~np.isfinite(baselines), 0.0, baselines)
+    physical = (signal - baselines[None, :]) / gains[None, :]
+    return np.nan_to_num(physical, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32, copy=False)
+
+
+def bandpass_filter(
+    signal: np.ndarray,
+    sampling_rate: float = TARGET_FS,
+    lo_hz: float = BANDPASS_LO_HZ,
+    hi_hz: float = BANDPASS_HI_HZ,
+    order: int = 3,
+) -> np.ndarray:
+    """Pasa-banda Butterworth de fase cero (SOS + sosfiltfilt).
+
+    Atenúa deriva de línea base (<0.5 Hz) y ruido muscular/red (>50 Hz).
+    Requiere señal de al menos ~2 s; si es más corta, la devuelve intacta.
+    """
+    signal = np.asarray(signal, dtype=np.float64)
+    nyquist = float(sampling_rate) / 2.0
+    if signal.shape[0] < int(2 * sampling_rate):
+        return signal.astype(np.float32, copy=False)
+    lo = min(max(float(lo_hz) / nyquist, 1e-4), 0.99)
+    hi = min(max(float(hi_hz) / nyquist, 1e-4), 0.99)
+    if lo >= hi:
+        raise ValueError(f"Banda inválida: lo={lo_hz} hi={hi_hz} fs={sampling_rate}")
+    sos = butter(int(order), [lo, hi], btype="band", output="sos")
+    filtered = sosfiltfilt(sos, signal, axis=0)
+    return np.nan_to_num(filtered, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32, copy=False)
+
+
+def compute_window_starts(
+    n_samples: int,
+    target_length: int = WINDOW_LENGTH,
+    windows_max: int = 1,
+) -> list[int]:
+    """Inicios de ventana (en muestras) equiespaciados sobre la señal.
+
+    - Señal corta (``n <= target``): un único inicio 0 (luego se aplica pad).
+    - ``windows_max <= 1``: ventana centrada (comportamiento legacy).
+    - Señal larga: hasta ``windows_max`` ventanas equiespaciadas que cubren
+      de inicio a fin (incluye primera y última muestra).
+    """
+    n_samples = int(n_samples)
+    target_length = int(target_length)
+    if n_samples <= target_length or int(windows_max) <= 1:
+        if n_samples <= target_length:
+            return [0]
+        return [(n_samples - target_length) // 2]
+    windows_max = int(windows_max)
+    span = n_samples - target_length
+    if windows_max == 1 or span <= 0:
+        return [span // 2]
+    # Ventanas no solapadas si caben; si no, solapadas equiespaciadas.
+    non_overlap = span // target_length + 1
+    k = min(windows_max, max(1, non_overlap))
+    if k == 1:
+        return [span // 2]
+    return [int(round(span * i / (k - 1))) for i in range(k)]
 
 
 def fix_length(signal: np.ndarray, target_len: int = WINDOW_LENGTH, mode: str = "center") -> np.ndarray:
@@ -370,10 +621,30 @@ def preprocess_ecg_array(
     sampling_rate: float = TARGET_FS,
     lead_names: Iterable[str] | None = None,
     target_fs: int = TARGET_FS,
-    target_length: int = WINDOW_LENGTH,
+    target_length: int | None = WINDOW_LENGTH,
     normalize: bool = True,
+    norm_mode: str = DEFAULT_NORM_MODE,
+    adc_gains: Iterable[float] | None = None,
+    adc_baselines: Iterable[float] | None = None,
+    units: str = "digital",
+    bandpass: bool = True,
+    clip_mv: float = PHYSICAL_CLIP_MV,
+    crop_mode: str = "center",
 ) -> np.ndarray:
-    """Convierte una señal 12-derivaciones a ``(5000, 12)`` lista para el modelo."""
+    """Convierte una señal 12-derivaciones a lista para el modelo.
+
+    Modos de normalización (``norm_mode``):
+
+    - ``\"physical\"`` (defecto v2): convierte a mV con ganancia/baseline del
+      header, aplica pasa-banda 0.5–50 Hz y clip ±``clip_mv``. Preserva
+      amplitudes absolutas y relativas (voltaje y eje eléctrico).
+    - ``\"global_zscore\"``: z-score global del registro (preserva eje).
+    - ``\"per_lead_zscore\"``: legacy v1 (requiere ``normalize=True``);
+      imprescindible para checkpoints entrenados con el esquema v1.
+
+    Si ``target_length`` es ``None`` no se recorta/rellena (útil para extraer
+    ventanas deslizantes sobre el registro completo).
+    """
     data = np.asarray(signal, dtype=np.float32)
     data = np.nan_to_num(data, nan=0.0, posinf=0.0, neginf=0.0)
 
@@ -385,15 +656,71 @@ def preprocess_ecg_array(
         data = data.T
 
     if lead_names is not None:
+        # Reordena gains/baselines junto con la señal si vienen en orden del header.
+        names = [normalize_lead_name(n) for n in lead_names]
+        if adc_gains is not None and adc_baselines is not None and len(names) == len(list(adc_gains)):
+            order = [names.index(lead) for lead in STANDARD_LEAD_ORDER]
+            adc_gains = [list(adc_gains)[k] for k in order]
+            adc_baselines = [list(adc_baselines)[k] for k in order]
         data = reorder_leads(data, lead_names)
     elif data.shape[1] != NUM_LEADS:
         raise ValueError(f"Se requieren {NUM_LEADS} derivaciones; shape={data.shape}")
 
+    norm_mode = str(norm_mode or DEFAULT_NORM_MODE).lower()
+    if norm_mode not in {"physical", "global_zscore", "per_lead_zscore"}:
+        raise ValueError(f"norm_mode inválido: {norm_mode}")
+
+    if normalize and norm_mode == "physical" and str(units).lower() != "mv":
+        data = to_physical_units(data, adc_gains=adc_gains, adc_baselines=adc_baselines)
+
     data = resample_signal(data, sampling_rate, target_fs)
+
     if normalize:
-        data = normalize_signal(data)
-    data = fix_length(data, target_length, mode="center")
+        if bandpass and norm_mode == "physical":
+            data = bandpass_filter(data, sampling_rate=target_fs)
+        if norm_mode == "physical":
+            data = np.clip(np.asarray(data, dtype=np.float32), -float(clip_mv), float(clip_mv))
+        elif norm_mode == "global_zscore":
+            data = normalize_signal_global(data)
+        else:
+            data = normalize_signal(data)
+
+    if target_length is not None:
+        data = fix_length(data, int(target_length), mode=crop_mode)
     return np.asarray(data, dtype=np.float32)
+
+
+def preprocess_to_windows(
+    signal: np.ndarray,
+    sampling_rate: float = TARGET_FS,
+    lead_names: Iterable[str] | None = None,
+    target_fs: int = TARGET_FS,
+    target_length: int = WINDOW_LENGTH,
+    windows_max: int = 1,
+    **preprocess_kwargs,
+) -> tuple[np.ndarray, list[int]]:
+    """Preprocesa el registro completo y extrae hasta ``windows_max`` ventanas.
+
+    Devuelve ``(ventanas, inicios)`` con ``ventanas`` de forma
+    ``(K, target_length, 12)``. Con ``windows_max=1`` equivale al recorte
+    centrado legacy.
+    """
+    full = preprocess_ecg_array(
+        signal,
+        sampling_rate=sampling_rate,
+        lead_names=lead_names,
+        target_fs=target_fs,
+        target_length=None,
+        **preprocess_kwargs,
+    )
+    starts = compute_window_starts(full.shape[0], target_length, windows_max)
+    windows = []
+    for start in starts:
+        piece = full[start:start + target_length, :]
+        if piece.shape[0] < target_length:
+            piece = np.pad(piece, ((0, target_length - piece.shape[0]), (0, 0)), mode="constant")
+        windows.append(piece.astype(np.float32, copy=False))
+    return np.stack(windows).astype(np.float32, copy=False), [int(s) for s in starts]
 
 
 def load_mat_signal(mat_path: str | Path, num_leads: int = NUM_LEADS) -> np.ndarray:
@@ -411,7 +738,14 @@ def load_mat_signal(mat_path: str | Path, num_leads: int = NUM_LEADS) -> np.ndar
     return raw.T
 
 
-def load_wfdb_record(mat_path: str | Path, hea_path: str | Path | None = None) -> tuple[np.ndarray, dict]:
+def load_wfdb_record(
+    mat_path: str | Path,
+    hea_path: str | Path | None = None,
+    norm_mode: str = DEFAULT_NORM_MODE,
+    bandpass: bool = True,
+    target_length: int | None = WINDOW_LENGTH,
+    crop_mode: str = "center",
+) -> tuple[np.ndarray, dict]:
     """Carga un registro WFDB challenge desde par ``.mat``/``.hea``."""
     mat_path = Path(mat_path)
     hea_path = Path(hea_path) if hea_path is not None else mat_path.with_suffix(".hea")
@@ -421,29 +755,111 @@ def load_wfdb_record(mat_path: str | Path, hea_path: str | Path | None = None) -
         raw,
         sampling_rate=meta["sampling_freq"],
         lead_names=meta["lead_names"],
+        target_length=target_length,
+        norm_mode=norm_mode,
+        adc_gains=meta.get("adc_gains"),
+        adc_baselines=meta.get("adc_baselines"),
+        units="digital",
+        bandpass=bandpass,
+        crop_mode=crop_mode,
     )
+    meta["norm_mode"] = norm_mode
+    meta["bandpass"] = bool(bandpass)
     return processed, meta
 
 
-def read_csv_ecg(csv_path: str | Path) -> tuple[np.ndarray, float, list[str]]:
-    """Lee CSV para inferencia. Primera línea opcional: ``# Sampling Rate: 500 Hz``."""
-    csv_path = Path(csv_path)
-    sampling_rate = TARGET_FS
-    with csv_path.open("r", encoding="utf-8") as handle:
-        first_line = handle.readline().strip()
+def load_wfdb_record_windows(
+    mat_path: str | Path,
+    hea_path: str | Path | None = None,
+    windows_max: int = 4,
+    norm_mode: str = DEFAULT_NORM_MODE,
+    bandpass: bool = True,
+) -> tuple[np.ndarray, dict]:
+    """Carga un registro WFDB y devuelve ``(ventanas, meta)``.
 
+    ``ventanas`` tiene forma ``(K, 5000, 12)`` con K<=``windows_max``.
+    Para registros de 10 s, K=1 (idéntico a :func:`load_wfdb_record`).
+    """
+    mat_path = Path(mat_path)
+    hea_path = Path(hea_path) if hea_path is not None else mat_path.with_suffix(".hea")
+    meta = parse_header(hea_path)
+    raw = load_mat_signal(mat_path, meta["num_leads"])
+    windows, starts = preprocess_to_windows(
+        raw,
+        sampling_rate=meta["sampling_freq"],
+        lead_names=meta["lead_names"],
+        windows_max=windows_max,
+        norm_mode=norm_mode,
+        adc_gains=meta.get("adc_gains"),
+        adc_baselines=meta.get("adc_baselines"),
+        units="digital",
+        bandpass=bandpass,
+    )
+    meta["norm_mode"] = norm_mode
+    meta["bandpass"] = bool(bandpass)
+    meta["window_starts"] = starts
+    meta["num_windows"] = int(windows.shape[0])
+    return windows, meta
+
+
+def read_csv_ecg(csv_path: str | Path) -> tuple[np.ndarray, float, list[str], dict]:
+    """Lee CSV para inferencia.
+
+    Líneas iniciales ``#`` (todas las que haya):
+
+    - ``# Sampling Rate: 500 Hz`` -> frecuencia de muestreo;
+    - ``# Preprocessed: <norm_mode>`` -> marcador escrito por la webapp al
+      convertir WFDB->CSV; si está presente, la señal ya está en 500 Hz /
+      5000 muestras / 12 derivaciones y NO debe reprocesarse.
+
+    Devuelve ``(values, sampling_rate, lead_names, csv_meta)``.
+    """
+    csv_path = Path(csv_path)
+    sampling_rate: float = TARGET_FS
     skiprows = 0
-    if first_line.startswith("#"):
-        skiprows = 1
-        lower = first_line.lower()
-        if "sampling rate" in lower:
-            try:
-                sampling_rate = float(first_line.split(":", 1)[1].strip().split()[0])
-            except Exception:
-                sampling_rate = TARGET_FS
+    comment_lines: list[str] = []
+    with csv_path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            text = line.strip()
+            if not text.startswith("#"):
+                break
+            skiprows += 1
+            comment_lines.append(text)
+            lower = text.lower()
+            if "sampling rate" in lower:
+                try:
+                    sampling_rate = float(text.split(":", 1)[1].strip().split()[0])
+                except Exception:
+                    sampling_rate = TARGET_FS
+
+    preprocessed_mode: str | None = None
+    for text in comment_lines:
+        if text.lower().startswith("# preprocessed:"):
+            preprocessed_mode = text.split(":", 1)[1].strip().lower() or "unknown"
+            # Formato "physical, bandpass=true, units=mV" -> modo es primer token.
+            preprocessed_mode = preprocessed_mode.split(",")[0].strip().split()[0]
 
     df = pd.read_csv(csv_path, skiprows=skiprows)
-    return df.values.astype(np.float32), sampling_rate, list(df.columns)
+    csv_meta = {
+        "sampling_rate": float(sampling_rate),
+        "preprocessed_mode": preprocessed_mode,
+        "comment_lines": comment_lines,
+    }
+    return df.values.astype(np.float32), float(sampling_rate), list(df.columns), csv_meta
+
+
+def infer_csv_units(values: np.ndarray) -> str:
+    """Heurística de unidades para CSV crudos de usuario.
+
+    - Si la amplitud máxima supera 20 -> valores digitales/ADC (requieren
+      conversión con ganancia 1000) -> ``\"digital\"``.
+    - En otro caso se asumen milivoltios -> ``\"mv\"``.
+    """
+    try:
+        peak = float(np.nanmax(np.abs(np.asarray(values, dtype=np.float64))))
+    except Exception:
+        return "mv"
+    return "digital" if peak > 20 else "mv"
 
 
 # ---------------------------------------------------------------------------
@@ -504,9 +920,12 @@ def scan_records(data_dir: str | Path, drop_no_selected_labels: bool = False) ->
             "hea_path": str(hea_path),
             "mat_path": str(mat_path),
             "record_name": meta["record_name"],
+            "num_leads": meta["num_leads"],
             "lead_names": meta["lead_names"],
             "sampling_freq": meta["sampling_freq"],
             "num_samples": meta["num_samples"],
+            "adc_gains": meta.get("adc_gains"),
+            "adc_baselines": meta.get("adc_baselines"),
             "age": meta["age"],
             "sex": meta["sex"],
             "source_db": infer_source_db(hea_path, data_dir),
@@ -636,15 +1055,30 @@ def split_assignments(records: list[dict], splits: dict[str, np.ndarray]) -> pd.
 
 def _process_single_record(record: dict) -> dict:
     try:
+        norm_mode = record.get("_norm_mode", DEFAULT_NORM_MODE)
+        bandpass = record.get("_bandpass", True)
+        window_position = int(record.get("_window_position", 0))
+        windows_max = int(record.get("_windows_max", 1))
         raw = load_mat_signal(record["mat_path"], record.get("num_leads", NUM_LEADS))
-        signal = preprocess_ecg_array(
+        full = preprocess_ecg_array(
             raw,
             sampling_rate=record["sampling_freq"],
             lead_names=record["lead_names"],
             target_fs=TARGET_FS,
-            target_length=WINDOW_LENGTH,
+            target_length=None,
             normalize=True,
+            norm_mode=norm_mode,
+            adc_gains=record.get("adc_gains"),
+            adc_baselines=record.get("adc_baselines"),
+            units="digital",
+            bandpass=bool(bandpass),
         )
+        starts = compute_window_starts(full.shape[0], WINDOW_LENGTH, windows_max)
+        start = starts[min(window_position, len(starts) - 1)]
+        piece = full[start:start + WINDOW_LENGTH, :]
+        if piece.shape[0] < WINDOW_LENGTH:
+            piece = np.pad(piece, ((0, WINDOW_LENGTH - piece.shape[0]), (0, 0)), mode="constant")
+        signal = np.asarray(piece, dtype=np.float32)
         return {
             "ok": True,
             "signal": signal,
@@ -653,6 +1087,9 @@ def _process_single_record(record: dict) -> dict:
             "sex": record["sex"],
             "source_db": record["source_db"],
             "record_name": record["record_name"],
+            "window_position": window_position,
+            "window_start": int(start),
+            "full_length": int(full.shape[0]),
             "dx_codes": ",".join(record["dx_codes"]),
             "matched_classes": ",".join(record["matched_classes"]),
             "error": None,
@@ -665,15 +1102,43 @@ def _process_single_record(record: dict) -> dict:
         }
 
 
+def _expand_windows_for_record(record: dict, windows_max: int) -> list[dict]:
+    """Expande un registro en 1..K specs (una por ventana de entrenamiento).
+
+    El número de ventanas se estima desde el header (muestras * 500/fs).
+    Registros de 10 s siempre producen 1 spec (ventana centrada).
+    """
+    windows_max = int(windows_max)
+    try:
+        n_target = int(round(float(record["num_samples"]) * TARGET_FS / float(record["sampling_freq"])))
+    except Exception:
+        n_target = WINDOW_LENGTH
+    n_windows = len(compute_window_starts(n_target, WINDOW_LENGTH, windows_max))
+    specs = []
+    for position in range(n_windows):
+        spec = dict(record)
+        spec["_window_position"] = position
+        spec["_windows_max"] = windows_max
+        specs.append(spec)
+    return specs
+
+
 def _write_string_attr(h5_file, name: str, values: list[str]) -> None:
     import h5py
     dtype = h5py.string_dtype(encoding="utf-8")
     h5_file.attrs.create(name, np.asarray(values, dtype=dtype))
 
 
-def _write_hdf5_attributes(h5_file, split_name: str, n_requested: int) -> None:
+def _write_hdf5_attributes(
+    h5_file,
+    split_name: str,
+    n_requested: int,
+    norm_mode: str = DEFAULT_NORM_MODE,
+    bandpass: bool = True,
+    windows_max: int = 1,
+) -> None:
     h5_file.attrs["dataset"] = "PhysioNet/CinC Challenge 2020"
-    h5_file.attrs["label_schema"] = "cinc2020_12_grouped_snomed"
+    h5_file.attrs["label_schema"] = LABEL_SCHEMA
     h5_file.attrs["label_mode"] = "multilabel"
     h5_file.attrs["problem_type"] = "multilabel_sigmoid_bce"
     h5_file.attrs["split"] = split_name
@@ -685,7 +1150,18 @@ def _write_hdf5_attributes(h5_file, split_name: str, n_requested: int) -> None:
     h5_file.attrs["num_leads"] = NUM_LEADS
     h5_file.attrs["num_classes"] = NUM_CLASSES
     h5_file.attrs["lead_order"] = ",".join(STANDARD_LEAD_ORDER)
-    h5_file.attrs["normalization"] = "per-lead z-score before padding"
+    h5_file.attrs["norm_mode"] = str(norm_mode)
+    h5_file.attrs["bandpass_filter"] = bool(bandpass)
+    h5_file.attrs["windows_max"] = int(windows_max)
+    if norm_mode == "physical":
+        h5_file.attrs["normalization"] = (
+            f"physical millivolts via header gain/baseline + bandpass {BANDPASS_LO_HZ}-{BANDPASS_HI_HZ} Hz + clip ±{PHYSICAL_CLIP_MV} mV"
+            if bandpass else f"physical millivolts via header gain/baseline + clip ±{PHYSICAL_CLIP_MV} mV"
+        )
+    elif norm_mode == "global_zscore":
+        h5_file.attrs["normalization"] = "per-record global z-score (all leads jointly) before padding"
+    else:
+        h5_file.attrs["normalization"] = "per-lead z-score before padding"
     h5_file.attrs["class_metadata_json"] = json.dumps(class_groups_as_records(), ensure_ascii=False)
     h5_file.attrs["excluded_groups_json"] = json.dumps(EXCLUDED_GROUPS, ensure_ascii=False)
     _write_string_attr(h5_file, "classes", CLASS_NAMES)
@@ -700,18 +1176,29 @@ def process_split_to_hdf5(
     num_workers: int = 6,
     chunksize: int = 8,
     write_batch_size: int = 32,
+    norm_mode: str = DEFAULT_NORM_MODE,
+    bandpass: bool = True,
+    windows_max: int = 1,
 ) -> dict:
     import h5py
     from tqdm import tqdm
 
     indices = np.asarray(list(indices), dtype=int)
     selected = [records[int(i)] for i in indices]
+    # Expansión multi-ventana (train): registros largos aportan hasta
+    # windows_max muestras de 10 s equiespaciadas con la misma etiqueta.
+    expanded: list[dict] = []
+    for record in selected:
+        for spec in _expand_windows_for_record(record, windows_max):
+            spec["_norm_mode"] = norm_mode
+            spec["_bandpass"] = bool(bandpass)
+            expanded.append(spec)
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     string_dtype = h5py.string_dtype(encoding="utf-8")
 
     with h5py.File(output_path, "w") as h5:
-        chunk_n = min(16, max(1, len(selected)))
+        chunk_n = min(16, max(1, len(expanded)))
         signals_ds = h5.create_dataset(
             "signals",
             shape=(0, WINDOW_LENGTH, NUM_LEADS),
@@ -726,7 +1213,7 @@ def process_split_to_hdf5(
             shape=(0, NUM_CLASSES),
             maxshape=(None, NUM_CLASSES),
             dtype="float32",
-            chunks=(min(256, max(1, len(selected))), NUM_CLASSES),
+            chunks=(min(256, max(1, len(expanded))), NUM_CLASSES),
         )
         ages_ds = h5.create_dataset("ages", shape=(0,), maxshape=(None,), dtype="float32")
         sexes_ds = h5.create_dataset("sexes", shape=(0,), maxshape=(None,), dtype=string_dtype)
@@ -734,12 +1221,15 @@ def process_split_to_hdf5(
         names_ds = h5.create_dataset("record_names", shape=(0,), maxshape=(None,), dtype=string_dtype)
         dx_ds = h5.create_dataset("dx_codes", shape=(0,), maxshape=(None,), dtype=string_dtype)
         matched_ds = h5.create_dataset("matched_classes", shape=(0,), maxshape=(None,), dtype=string_dtype)
+        winpos_ds = h5.create_dataset("window_positions", shape=(0,), maxshape=(None,), dtype="int32")
+        winstart_ds = h5.create_dataset("window_starts", shape=(0,), maxshape=(None,), dtype="int32")
 
-        _write_hdf5_attributes(h5, output_path.stem, len(selected))
+        _write_hdf5_attributes(h5, output_path.stem, len(selected), norm_mode, bandpass, windows_max)
 
         buffers = {
             "signals": [], "labels": [], "ages": [], "sexes": [],
             "source_dbs": [], "record_names": [], "dx_codes": [], "matched_classes": [],
+            "window_positions": [], "window_starts": [],
         }
         n_ok, n_error = 0, 0
         error_examples = []
@@ -750,7 +1240,7 @@ def process_split_to_hdf5(
                 return
             batch_size = len(buffers["signals"])
             old, new = n_ok, n_ok + batch_size
-            for dataset in [signals_ds, labels_ds, ages_ds, sexes_ds, sources_ds, names_ds, dx_ds, matched_ds]:
+            for dataset in [signals_ds, labels_ds, ages_ds, sexes_ds, sources_ds, names_ds, dx_ds, matched_ds, winpos_ds, winstart_ds]:
                 dataset.resize(new, axis=0)
             signals_ds[old:new] = np.stack(buffers["signals"]).astype(np.float32, copy=False)
             labels_ds[old:new] = np.stack(buffers["labels"]).astype(np.float32, copy=False)
@@ -760,19 +1250,21 @@ def process_split_to_hdf5(
             names_ds[old:new] = buffers["record_names"]
             dx_ds[old:new] = buffers["dx_codes"]
             matched_ds[old:new] = buffers["matched_classes"]
+            winpos_ds[old:new] = np.asarray(buffers["window_positions"], dtype=np.int32)
+            winstart_ds[old:new] = np.asarray(buffers["window_starts"], dtype=np.int32)
             n_ok = new
             for values in buffers.values():
                 values.clear()
 
         if num_workers == 1:
-            iterator = map(_process_single_record, selected)
+            iterator = map(_process_single_record, expanded)
             executor = None
         else:
             executor = ProcessPoolExecutor(max_workers=num_workers)
-            iterator = executor.map(_process_single_record, selected, chunksize=chunksize)
+            iterator = executor.map(_process_single_record, expanded, chunksize=chunksize)
 
         try:
-            for result in tqdm(iterator, total=len(selected), desc=f"Procesando {output_path.name}", unit="reg"):
+            for result in tqdm(iterator, total=len(expanded), desc=f"Procesando {output_path.name}", unit="muestra"):
                 if not result["ok"]:
                     n_error += 1
                     if len(error_examples) < 50:
@@ -787,6 +1279,8 @@ def process_split_to_hdf5(
                 buffers["record_names"].append(result["record_name"])
                 buffers["dx_codes"].append(result["dx_codes"])
                 buffers["matched_classes"].append(result["matched_classes"])
+                buffers["window_positions"].append(result.get("window_position", 0))
+                buffers["window_starts"].append(result.get("window_start", 0))
                 if len(buffers["signals"]) >= write_batch_size:
                     flush()
         finally:
@@ -806,6 +1300,9 @@ def write_reports(
     counters: dict,
     splits: dict[str, np.ndarray] | None = None,
     drop_no_selected_labels: bool = False,
+    norm_mode: str = DEFAULT_NORM_MODE,
+    bandpass: bool = True,
+    train_windows_max: int = 4,
 ) -> None:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -818,7 +1315,7 @@ def write_reports(
 
     summary = {
         "dataset": "PhysioNet/CinC Challenge 2020",
-        "label_schema": "cinc2020_12_grouped_snomed",
+        "label_schema": LABEL_SCHEMA,
         "num_classes": NUM_CLASSES,
         "class_names": CLASS_NAMES,
         "classes": class_groups_as_records(),
@@ -828,7 +1325,16 @@ def write_reports(
         "window_length": WINDOW_LENGTH,
         "num_leads": NUM_LEADS,
         "lead_order": STANDARD_LEAD_ORDER,
-        "normalization": "per-lead z-score before padding",
+        "norm_mode": str(norm_mode),
+        "bandpass_filter": bool(bandpass),
+        "bandpass_hz": [BANDPASS_LO_HZ, BANDPASS_HI_HZ],
+        "physical_clip_mv": PHYSICAL_CLIP_MV,
+        "train_windows_max": int(train_windows_max),
+        "normalization": (
+            f"physical millivolts + bandpass + clip ±{PHYSICAL_CLIP_MV} mV" if norm_mode == "physical"
+            else "per-record global z-score" if norm_mode == "global_zscore"
+            else "per-lead z-score (legacy v1)"
+        ),
         "split_method": "MultilabelStratifiedShuffleSplit by label vector, not by source",
         "drop_no_selected_labels": bool(drop_no_selected_labels),
         "scan_counters": counters,
@@ -851,6 +1357,9 @@ def build_datasets(
     val_frac: float = 0.15,
     test_frac: float = 0.15,
     random_state: int = 42,
+    norm_mode: str = DEFAULT_NORM_MODE,
+    bandpass: bool = True,
+    train_windows_max: int = 4,
 ) -> dict:
     """Función programática usada por ``examples/cinc2020/build_datasets.py``."""
     data_dir = Path(data_dir).resolve()
@@ -859,9 +1368,12 @@ def build_datasets(
     print("\n" + "=" * 80)
     print("PREPROCESAMIENTO CINC2020 — 12 CLASES AGRUPADAS")
     print("=" * 80)
+    print(f"Esquema     : {LABEL_SCHEMA}")
     print(f"Dataset     : {data_dir}")
     print(f"Salida      : {output_dir}")
     print(f"Señal       : {NUM_LEADS} leads, {TARGET_FS} Hz, {WINDOW_LENGTH} muestras")
+    print(f"Norm        : {norm_mode} (bandpass={bandpass})")
+    print(f"Ventanas    : train x{train_windows_max} / val-test x1")
     print(f"Clases      : {NUM_CLASSES} -> {CLASS_NAMES}")
     print(f"All-zero    : {'excluir' if drop_no_selected_labels else 'conservar'}")
 
@@ -882,7 +1394,8 @@ def build_datasets(
         raise RuntimeError("Clases sin positivos: " + ", ".join(empty))
 
     if scan_only:
-        write_reports(output_dir, records, counters, splits=None, drop_no_selected_labels=drop_no_selected_labels)
+        write_reports(output_dir, records, counters, splits=None, drop_no_selected_labels=drop_no_selected_labels,
+                      norm_mode=norm_mode, bandpass=bandpass, train_windows_max=train_windows_max)
         return {"records": len(records), "counters": counters, "splits": None}
 
     splits = stratified_multilabel_split(labels, val_frac=val_frac, test_frac=test_frac, random_state=random_state)
@@ -890,7 +1403,8 @@ def build_datasets(
     for split_name, idx in splits.items():
         print(f"  {split_name:<5}: {len(idx):,}")
 
-    write_reports(output_dir, records, counters, splits=splits, drop_no_selected_labels=drop_no_selected_labels)
+    write_reports(output_dir, records, counters, splits=splits, drop_no_selected_labels=drop_no_selected_labels,
+                  norm_mode=norm_mode, bandpass=bandpass, train_windows_max=train_windows_max)
 
     processing = []
     for split_name in ["train", "val", "test"]:
@@ -901,6 +1415,9 @@ def build_datasets(
             num_workers=workers,
             chunksize=chunksize,
             write_batch_size=write_batch_size,
+            norm_mode=norm_mode,
+            bandpass=bandpass,
+            windows_max=train_windows_max if split_name == "train" else 1,
         ))
 
     (output_dir / "signal_processing_summary.json").write_text(
@@ -925,6 +1442,15 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--val_frac", type=float, default=0.15)
     parser.add_argument("--test_frac", type=float, default=0.15)
     parser.add_argument("--random_state", type=int, default=42)
+    parser.add_argument("--norm_mode", choices=["physical", "global_zscore", "per_lead_zscore"],
+                        default=DEFAULT_NORM_MODE,
+                        help="Normalización: physical=mV+clip (v2), global_zscore, per_lead_zscore (legacy v1)")
+    parser.add_argument("--bandpass", dest="bandpass", action="store_true", default=True,
+                        help="Aplica pasa-banda 0.5-50 Hz en modo physical (defecto: activado)")
+    parser.add_argument("--no-bandpass", dest="bandpass", action="store_false",
+                        help="Desactiva el pasa-banda")
+    parser.add_argument("--train_windows_max", type=int, default=4,
+                        help="Ventanas de 10 s por registro largo en train (val/test siempre 1 centrada)")
     args = parser.parse_args(argv)
 
     build_datasets(
@@ -938,6 +1464,9 @@ def main(argv: list[str] | None = None) -> None:
         val_frac=args.val_frac,
         test_frac=args.test_frac,
         random_state=args.random_state,
+        norm_mode=args.norm_mode,
+        bandpass=args.bandpass,
+        train_windows_max=args.train_windows_max,
     )
 
 

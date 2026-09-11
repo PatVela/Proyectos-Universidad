@@ -55,7 +55,7 @@ def evaluate_under_perturbation(model, dataset, thresholds, device, kind, level,
     if max_samples is not None and max_samples < len(dataset):
         indices = rng.choice(len(dataset), size=max_samples, replace=False)
         dataset = Subset(dataset, indices.tolist())
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=(device.type == "cuda"))
+    loader = DataLoader(dataset, **predict._loader_kwargs(batch_size, num_workers, pin_memory=(device.type == "cuda")))
     probs, labels = [], []
     for x, y in tqdm(loader, desc=f"{kind}:{level}", leave=False):
         x = x.to(device, non_blocking=True)
@@ -95,8 +95,10 @@ def main():
     parser.add_argument("test_h5", default="data/cinc2020_12/test.h5")
     parser.add_argument("--thresholds", default=None, help="thresholds_validation.csv; si se omite usa 0.5")
     parser.add_argument("--output", default="results/cinc2020_12/robustness.csv")
-    parser.add_argument("--batch-size", type=int, default=8)
-    parser.add_argument("--num-workers", type=int, default=2)
+    parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--num-workers", type=int, default=0,
+                        help="Workers del DataLoader (0 = recomendado con preload en RAM)")
+    parser.add_argument("--no-preload", action="store_true", help="Desactiva la precarga del HDF5 a RAM (lento)")
     parser.add_argument("--max-samples", type=int, default=None)
     parser.add_argument("--device", choices=["auto", "cuda", "cpu"], default="auto")
     parser.add_argument("--seed", type=int, default=42)
@@ -105,7 +107,7 @@ def main():
     util.set_seed(args.seed)
     device = predict.get_device(args.device)
     model, _checkpoint, class_names = predict.load_model(args.checkpoint, device=device)
-    dataset = predict.HDF5PredictionDataset(args.test_h5)
+    dataset = predict.HDF5PredictionDataset(args.test_h5, preload=not args.no_preload)
     thresholds = load_thresholds(args.thresholds, class_names)
 
     perturbations = [

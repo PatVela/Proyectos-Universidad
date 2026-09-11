@@ -161,7 +161,7 @@ def save_confusion_matrices(out_dir, class_df, split):
     pd.DataFrame(rows).to_csv(Path(out_dir) / f"confusion_matrices_{split}.csv", index=False)
 
 
-def run_evaluation(config, checkpoint, output_dir, batch_size=None, num_workers=None, device="auto", no_amp=False, normal_fallback_min_prob=None):
+def run_evaluation(config, checkpoint, output_dir, batch_size=None, num_workers=None, device="auto", no_amp=False, normal_fallback_min_prob=None, preload=True):
     output_dir = util.resolve_path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -170,7 +170,7 @@ def run_evaluation(config, checkpoint, output_dir, batch_size=None, num_workers=
     batch_size = int(batch_size or config.get("batch_size", 8))
     num_workers = int(num_workers if num_workers is not None else config.get("num_workers", 2))
 
-    val = predict.predict_hdf5(checkpoint, val_h5, batch_size=batch_size, num_workers=num_workers, device=device, amp=not no_amp)
+    val = predict.predict_hdf5(checkpoint, val_h5, batch_size=batch_size, num_workers=num_workers, device=device, amp=not no_amp, preload=preload)
     thresholds, threshold_df = optimize_thresholds(val["labels"], val["probabilities"], val["class_names"])
     threshold_df.to_csv(output_dir / "thresholds_validation.csv", index=False)
 
@@ -179,7 +179,7 @@ def run_evaluation(config, checkpoint, output_dir, batch_size=None, num_workers=
         normal_fallback_min_prob=normal_fallback_min_prob,
     )
 
-    test = predict.predict_hdf5(checkpoint, test_h5, batch_size=batch_size, num_workers=num_workers, device=device, amp=not no_amp)
+    test = predict.predict_hdf5(checkpoint, test_h5, batch_size=batch_size, num_workers=num_workers, device=device, amp=not no_amp, preload=preload)
     test_class_df, test_global, test_pred = evaluate_predictions(
         test["labels"], test["probabilities"], thresholds, test["class_names"], "test",
         normal_fallback_min_prob=normal_fallback_min_prob,
@@ -194,7 +194,7 @@ def run_evaluation(config, checkpoint, output_dir, batch_size=None, num_workers=
 
     summary = {
         "checkpoint": str(checkpoint),
-        "label_schema": "cinc2020_12_grouped_snomed",
+        "label_schema": load.LABEL_SCHEMA,
         "problem_type": "multilabel sigmoid + BCEWithLogitsLoss",
         "class_names": val["class_names"],
         "thresholds": thresholds,
@@ -219,6 +219,7 @@ def main():
     parser.add_argument("--num-workers", type=int, default=None)
     parser.add_argument("--device", choices=["auto", "cuda", "cpu"], default="auto")
     parser.add_argument("--no-amp", action="store_true")
+    parser.add_argument("--no-preload", action="store_true", help="Desactiva la precarga del HDF5 a RAM (lectura por disco, lento)")
     parser.add_argument("--normal-fallback-min-prob", type=float, default=None, help="Postprocesamiento opcional: si no hay positivos, añadir NSR cuando P(NSR) >= valor. Ejemplo: 0.40")
     args = parser.parse_args()
 
@@ -241,6 +242,7 @@ def main():
         args.device,
         args.no_amp,
         normal_fallback_min_prob=args.normal_fallback_min_prob,
+        preload=not args.no_preload,
     )
 
 

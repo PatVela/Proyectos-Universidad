@@ -33,15 +33,25 @@ except ImportError:  # Permite `python ecg/train.py ...`.
 
 
 class HDF5ECGDataset(Dataset):
-    """Dataset lazy para ``signals``/``labels`` generados por ecg.load."""
+    """Dataset HDF5 con precarga opcional a RAM (rápido en Windows).
 
-    def __init__(self, h5_path: str | Path, expected_num_classes: int = load.NUM_CLASSES):
+    Con ``preload=True`` (defecto) carga signals/labels a RAM una sola vez
+    (~7-11 GB para train CINC2020). Úselo con ``num_workers=0``: en Windows
+    los workers con spawn duplicarían esos GB por worker. Si el archivo
+    supera ``max_preload_gb``, cae automáticamente a lectura por disco.
+    """
+
+    def __init__(self, h5_path: str | Path, expected_num_classes: int = load.NUM_CLASSES,
+                 preload: bool = True, max_preload_gb: float = 16):
         import h5py
 
         self.h5_path = str(util.resolve_path(h5_path))
         if not os.path.exists(self.h5_path):
             raise FileNotFoundError(f"No se encontró HDF5: {self.h5_path}")
 
+        self._signals = None
+        self._labels = None
+        self._in_ram = False
         with h5py.File(self.h5_path, "r") as h5:
             self.length = int(h5["signals"].shape[0])
             self.signal_shape = tuple(h5["signals"].shape)
@@ -49,6 +59,16 @@ class HDF5ECGDataset(Dataset):
             classes = h5.attrs.get("classes", None)
             self.classes = [decode_h5_string(c) for c in classes] if classes is not None else load.CLASS_NAMES.copy()
             self.normalization = decode_h5_string(h5.attrs.get("normalization", "unknown"))
+            self.label_schema = decode_h5_string(h5.attrs.get("label_schema", "unknown"))
+            self.norm_mode = decode_h5_string(h5.attrs.get("norm_mode", "unknown"))
+            nbytes = int(h5["signals"].size * 4 + h5["labels"].size * 4)
+            if preload and nbytes <= max_preload_gb * 1024 ** 3:
+                print(f"Precargando a RAM {self.h5_path} ({nbytes / 1024 ** 3:.1f} GB)...", flush=True)
+                self._signals = np.asarray(h5["signals"][:], dtype=np.float32)
+                self._labels = np.asarray(h5["labels"][:], dtype=np.float32)
+                self._in_ram = True
+            elif preload:
+                print(f"AVISO: {self.h5_path} pesa {nbytes / 1024 ** 3:.1f} GB; lectura por disco (lento).")
 
         if self.signal_shape[1:] != (load.WINDOW_LENGTH, load.NUM_LEADS):
             raise ValueError(f"signals debe ser (N, 5000, 12); actual={self.signal_shape}")
@@ -68,11 +88,14 @@ class HDF5ECGDataset(Dataset):
         return self.length
 
     def __getitem__(self, index):
-        self._open()
-        # HDF5: (5000,12). PyTorch Conv1d: (12,5000).
-        x = np.asarray(self.h5["signals"][index], dtype=np.float32).T
-        y = np.asarray(self.h5["labels"][index], dtype=np.float32)
-        # La señal ya está normalizada por derivación; no dividir por 1000.
+        if self._in_ram:
+            # HDF5: (5000,12). PyTorch Conv1d: (12,5000).
+            x = self._signals[index].T
+            y = self._labels[index]
+        else:
+            self._open()
+            x = np.asarray(self.h5["signals"][index], dtype=np.float32).T
+            y = np.asarray(self.h5["labels"][index], dtype=np.float32)
         return torch.from_numpy(x), torch.from_numpy(y)
 
     def __del__(self):
@@ -138,14 +161,30 @@ def make_dataloaders(params: dict):
     dev_ds = HDF5ECGDataset(params["dev"], expected_num_classes=expected_classes)
     if train_ds.classes != dev_ds.classes:
         raise ValueError("Las clases de train y dev no coinciden")
+    for name, ds in (("train", train_ds), ("dev", dev_ds)):
+        if ds.label_schema not in {"unknown", load.LABEL_SCHEMA}:
+            print(
+                f"AVISO: {name}.h5 usa label_schema={ds.label_schema!r} distinto del actual "
+                f"({load.LABEL_SCHEMA!r}). Regenere los HDF5 con examples/cinc2020/build_datasets.py."
+            )
+    print(f"HDF5 train: schema={train_ds.label_schema} norm={train_ds.norm_mode} clases={train_ds.classes}")
 
+    train_loader = DataLoader(train_ds, **_loader_kwargs(params, shuffle=True))
+    dev_loader = DataLoader(dev_ds, **_loader_kwargs(params, shuffle=False))
+    return train_loader, dev_loader, train_ds, dev_ds
+
+
+def _loader_kwargs(params: dict, shuffle: bool) -> dict:
+    """kwargs de DataLoader seguros con num_workers=0 (evita error de persistent/prefetch)."""
     batch_size = int(params.get("batch_size", params.get("batch", 8)))
     num_workers = int(params.get("num_workers", 2))
     pin_memory = bool(params.get("pin_memory", True))
-
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=pin_memory)
-    dev_loader = DataLoader(dev_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=pin_memory)
-    return train_loader, dev_loader, train_ds, dev_ds
+    kwargs: dict = dict(batch_size=batch_size, shuffle=shuffle,
+                        num_workers=num_workers, pin_memory=pin_memory)
+    if num_workers > 0:
+        kwargs.update(persistent_workers=True,
+                      prefetch_factor=int(params.get("prefetch_factor", 4)))
+    return kwargs
 
 
 def run_epoch(model, loader, criterion, optimizer, device, scaler=None) -> float:
@@ -355,7 +394,7 @@ def train(args, params: dict):
 
     summary = {
         "dataset": "PhysioNet/CinC Challenge 2020",
-        "label_schema": "cinc2020_12_grouped_snomed",
+        "label_schema": load.LABEL_SCHEMA,
         "problem_type": "multilabel sigmoid + BCEWithLogitsLoss",
         "model_type": model.model_type,
         "is_regular_conv": bool(params.get("is_regular_conv", False)),

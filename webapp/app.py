@@ -147,7 +147,7 @@ def _checkpoint_info(model_path: str | None, saved_dir: str | None) -> dict | No
             "meta": {
                 "epoch": ckpt.get("epoch"),
                 "val_loss": ckpt.get("val_loss"),
-                "label_schema": ckpt.get("label_schema", "cinc2020_12_grouped_snomed"),
+                "label_schema": ckpt.get("label_schema", load.LABEL_SCHEMA),
                 "problem_type": ckpt.get("problem_type", "multilabel_sigmoid_bce"),
             },
             "num_parameters": n_params,
@@ -242,9 +242,26 @@ def _load_thresholds_for_app(model_path: str | None, saved_dir: str | None) -> t
             values = {str(row["class"]): float(row["threshold"]) for _, row in df.iterrows()}
             if all(name in values for name in load.CLASS_NAMES):
                 return values, str(path)
+            if all(name in values for name in load.LEGACY_CLASS_NAMES):
+                return values, str(path)
         except Exception:
             continue
     return None, None
+
+
+def _best_worst(rows: list[dict], key: str, label: str) -> tuple[dict | None, dict | None]:
+    """Mejor/peor fila por una métrica numérica (tolerante a valores ausentes)."""
+    best = worst = None
+    for record in rows:
+        try:
+            value = float(record.get(key))
+        except (TypeError, ValueError):
+            continue
+        if best is None or value > best["value"]:
+            best = {"name": str(record.get(label, "—")), "value": value}
+        if worst is None or value < worst["value"]:
+            worst = {"name": str(record.get(label, "—")), "value": value}
+    return best, worst
 
 
 def _load_metrics() -> dict:
@@ -263,15 +280,19 @@ def _load_metrics() -> dict:
                 summary = None
         per_class = _read_csv_records(per_class_csv)
         per_class_test = [r for r in per_class if r.get("split") == "test"] or per_class
+        best_class, worst_class = _best_worst(per_class_test, key="f1", label="class")
         return {
             "found": True,
             "path": str(folder),
             "global": _read_csv_records(global_csv),
             "per_class": per_class,
             "per_class_test": per_class_test,
+            "best_class": best_class,
+            "worst_class": worst_class,
             "summary": _jsonable(summary),
         }
-    return {"found": False, "path": "", "global": [], "per_class": [], "per_class_test": [], "summary": None}
+    return {"found": False, "path": "", "global": [], "per_class": [], "per_class_test": [],
+            "best_class": None, "worst_class": None, "summary": None}
 
 
 def _load_experiment_results() -> dict:
@@ -290,13 +311,40 @@ def _load_experiment_results() -> dict:
             robustness = rows
             robustness_path = str(path)
             break
+    comparison_test = [r for r in comparison if str(r.get("split", "")).lower() == "test"] or comparison
+    _winner, _ = _best_worst(comparison_test, key="f1_macro", label="model")
+    comparison_winner = _winner["name"] if _winner else None
+    clean_f1 = None
+    for record in robustness:
+        if str(record.get("perturbation", "")).lower() == "clean":
+            try:
+                clean_f1 = float(record.get("f1_macro"))
+            except (TypeError, ValueError):
+                clean_f1 = None
+            break
+    biggest_drop = None
+    for record in robustness:
+        try:
+            delta = float(record.get("f1_macro")) - clean_f1 if clean_f1 is not None else None
+        except (TypeError, ValueError):
+            delta = None
+        record["delta_f1_macro"] = delta
+        if delta is not None and str(record.get("perturbation", "")).lower() != "clean":
+            if biggest_drop is None or delta < biggest_drop["delta"]:
+                biggest_drop = {
+                    "name": str(record.get("perturbation", "—")),
+                    "level": record.get("level", "—"),
+                    "delta": delta,
+                }
     return {
         "comparison_found": bool(comparison),
         "comparison_path": str(root / "model_comparison.csv"),
         "comparison": comparison,
+        "comparison_winner": comparison_winner,
         "robustness_found": bool(robustness),
         "robustness_path": robustness_path,
         "robustness": robustness,
+        "biggest_drop": biggest_drop,
     }
 
 
@@ -327,6 +375,11 @@ def create_app() -> Flask:
         resolved_model = _resolve_model_for_display(model_path, saved_dir)
         checkpoints = _list_checkpoints(saved_dir)
         model_info = _checkpoint_info(model_path, saved_dir)
+        threshold_values, _ = _load_thresholds_for_app(model_path, saved_dir)
+        thresholds_info = {
+            "found": bool(threshold_values),
+            "num_classes": len(threshold_values) if threshold_values else 0,
+        }
         return render_template(
             "index.html",
             class_groups=load.CLASS_GROUPS_12,
@@ -350,6 +403,7 @@ def create_app() -> Flask:
             model_hash=_short_model_id(resolved_model) if resolved_model != "No configurado o no encontrado" else "",
             metrics=_load_metrics(),
             experiments=_load_experiment_results(),
+            thresholds_info=thresholds_info,
         )
 
     @app.get("/models")

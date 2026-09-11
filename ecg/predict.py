@@ -31,14 +31,23 @@ except ImportError:
 
 
 class HDF5PredictionDataset(Dataset):
-    """Dataset HDF5 mínimo para inferencia/evaluación."""
+    """Dataset HDF5 mínimo para inferencia/evaluación.
 
-    def __init__(self, h5_path: str | Path):
+    Con ``preload=True`` (defecto) carga signals/labels a RAM una sola vez
+    (~1.5 GB para val/test CINC2020). Úselo con ``num_workers=0``: en Windows
+    los workers con spawn duplicarían esos GB por worker. Si el archivo
+    supera ``max_preload_gb``, cae automáticamente a lectura por disco.
+    """
+
+    def __init__(self, h5_path: str | Path, preload: bool = True, max_preload_gb: float = 16):
         import h5py
 
         self.h5_path = str(util.resolve_path(h5_path))
         if not os.path.exists(self.h5_path):
             raise FileNotFoundError(f"No existe HDF5: {self.h5_path}")
+        self._signals = None
+        self._labels = None
+        self._in_ram = False
         with h5py.File(self.h5_path, "r") as h5:
             self.length = int(h5["signals"].shape[0])
             self.signal_shape = tuple(h5["signals"].shape)
@@ -49,6 +58,14 @@ class HDF5PredictionDataset(Dataset):
                 self.record_names = [_decode(x) for x in h5["record_names"][:]]
             else:
                 self.record_names = [f"record_{i}" for i in range(self.length)]
+            nbytes = int(h5["signals"].size * 4 + (h5["labels"].size * 4 if "labels" in h5 else 0))
+            if preload and nbytes <= max_preload_gb * 1024 ** 3:
+                print(f"Precargando a RAM {self.h5_path} ({nbytes / 1024 ** 3:.1f} GB)...", flush=True)
+                self._signals = np.asarray(h5["signals"][:], dtype=np.float32)
+                self._labels = np.asarray(h5["labels"][:], dtype=np.float32) if "labels" in h5 else None
+                self._in_ram = True
+            elif preload:
+                print(f"AVISO: {self.h5_path} pesa {nbytes / 1024 ** 3:.1f} GB; lectura por disco (lento).")
         self.h5 = None
 
     def _open(self):
@@ -60,12 +77,16 @@ class HDF5PredictionDataset(Dataset):
         return self.length
 
     def __getitem__(self, index):
-        self._open()
-        x = np.asarray(self.h5["signals"][index], dtype=np.float32).T
-        if "labels" in self.h5:
-            y = np.asarray(self.h5["labels"][index], dtype=np.float32)
+        if self._in_ram:
+            x = self._signals[index].T
+            y = self._labels[index] if self._labels is not None else np.zeros(load.NUM_CLASSES, dtype=np.float32)
         else:
-            y = np.zeros(load.NUM_CLASSES, dtype=np.float32)
+            self._open()
+            x = np.asarray(self.h5["signals"][index], dtype=np.float32).T
+            if "labels" in self.h5:
+                y = np.asarray(self.h5["labels"][index], dtype=np.float32)
+            else:
+                y = np.zeros(load.NUM_CLASSES, dtype=np.float32)
         return torch.from_numpy(x), torch.from_numpy(y)
 
     def __del__(self):
@@ -74,6 +95,15 @@ class HDF5PredictionDataset(Dataset):
                 self.h5.close()
         except Exception:
             pass
+
+
+def _loader_kwargs(batch_size: int, num_workers: int, pin_memory: bool, prefetch_factor: int = 4) -> dict:
+    """kwargs de DataLoader seguros con num_workers=0 (evita error de persistent/prefetch)."""
+    kwargs: dict = dict(batch_size=int(batch_size), shuffle=False,
+                        num_workers=int(num_workers), pin_memory=bool(pin_memory))
+    if int(num_workers) > 0:
+        kwargs.update(persistent_workers=True, prefetch_factor=int(prefetch_factor))
+    return kwargs
 
 
 def _decode(value) -> str:
@@ -104,15 +134,36 @@ def model_params_from_config(config: dict) -> dict:
     }
 
 
-def load_model(checkpoint_path: str | Path, device: torch.device | None = None):
-    """Carga checkpoint y devuelve ``(model, checkpoint, class_names)``."""
+def load_model(checkpoint_path: str | Path, device: torch.device | None = None, strict_classes: bool = False):
+    """Carga checkpoint y devuelve ``(model, checkpoint, class_names)``.
+
+    Además de validar el número de clases, compara los *nombres* contra el
+    esquema actual (:data:`ecg.load.CLASS_NAMES`). Si difieren (p.ej.
+    checkpoint v1 con ``LAD``/``RBBB`` frente a esquema v2 con
+    ``AxisDev``/``BBB``), imprime una advertencia con la correspondencia,
+    porque las probabilidades deben interpretarse con los nombres del
+    checkpoint, no con los actuales. Con ``strict_classes=True`` la
+    diferencia de nombres lanza ``ValueError``.
+    """
     device = device or get_device("auto")
     checkpoint_path = util.resolve_path(checkpoint_path)
     checkpoint = util.load_checkpoint(checkpoint_path, map_location=device)
     config = checkpoint.get("config", {})
-    class_names = checkpoint.get("class_names", load.CLASS_NAMES.copy())
+    class_names = list(checkpoint.get("class_names", load.CLASS_NAMES.copy()))
     if len(class_names) != load.NUM_CLASSES:
         raise ValueError(f"El checkpoint tiene {len(class_names)} clases; se esperaban {load.NUM_CLASSES}")
+    if class_names != load.CLASS_NAMES:
+        lines = [f"  [{i}] checkpoint={c!r} actual={n!r}" for i, (c, n) in enumerate(zip(class_names, load.CLASS_NAMES))]
+        message = (
+            "AVISO: los nombres de clase del checkpoint NO coinciden con el esquema actual.\n"
+            + "\n".join(lines)
+            + f"\nCheckpoint label_schema={checkpoint.get('label_schema')!r}; actual={load.LABEL_SCHEMA!r}.\n"
+            + "Interprete las probabilidades con los nombres del checkpoint. "
+            + "Si entrenó con el esquema v1, regenere HDF5 con el esquema v2 y reentrene."
+        )
+        if strict_classes:
+            raise ValueError(message)
+        print(message)
 
     params = model_params_from_config(config)
     params["num_classes"] = len(class_names)
@@ -120,6 +171,11 @@ def load_model(checkpoint_path: str | Path, device: torch.device | None = None):
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
     return model, checkpoint, class_names
+
+
+def preprocessing_for_checkpoint(checkpoint: dict) -> dict:
+    """Parámetros de preprocesamiento compatibles con un checkpoint cargado."""
+    return load.preprocessing_for_schema(checkpoint.get("label_schema"))
 
 
 @torch.no_grad()
@@ -138,13 +194,82 @@ def predict_array(model, signal: np.ndarray, device: torch.device | None = None)
     return torch.sigmoid(logits)[0].detach().cpu().numpy()
 
 
-def predict_csv(checkpoint_path: str | Path, csv_path: str | Path, threshold: float = 0.5, device: str = "auto") -> dict:
-    """Lee un CSV ECG, preprocesa y predice 12 probabilidades."""
+@torch.no_grad()
+def predict_windows(
+    model,
+    windows: np.ndarray,
+    device: torch.device | None = None,
+    aggregate: str = "max",
+    batch_size: int = 8,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Predice K ventanas ``(K, 5000, 12)`` y agrega a un vector de 12 probs.
+
+    ``aggregate``: ``"max"`` (recomendado para no perder eventos focales),
+    ``"mean"`` o ``"median"``. Devuelve ``(probs_agregadas, probs_por_ventana)``.
+    """
+    device = device or next(model.parameters()).device
+    x = np.asarray(windows, dtype=np.float32)
+    if x.ndim != 3 or x.shape[1:] != (load.WINDOW_LENGTH, load.NUM_LEADS):
+        raise ValueError(f"Ventanas inválidas: {x.shape}, se esperaba (K, 5000, 12)")
+    model.eval()
+    per_window = []
+    for start in range(0, x.shape[0], max(1, int(batch_size))):
+        batch = torch.from_numpy(x[start:start + batch_size].transpose(0, 2, 1)).to(device)
+        per_window.append(torch.sigmoid(model(batch)).float().cpu().numpy())
+    per_window = np.concatenate(per_window, axis=0)
+    aggregate = str(aggregate).lower()
+    if aggregate == "max":
+        agg = per_window.max(axis=0)
+    elif aggregate == "mean":
+        agg = per_window.mean(axis=0)
+    elif aggregate == "median":
+        agg = np.median(per_window, axis=0)
+    else:
+        raise ValueError(f"aggregate inválido: {aggregate} (use max/mean/median)")
+    return agg.astype(np.float32), per_window.astype(np.float32)
+
+
+def predict_csv(
+    checkpoint_path: str | Path,
+    csv_path: str | Path,
+    threshold: float = 0.5,
+    device: str = "auto",
+    windows_max: int = 1,
+    aggregate: str = "max",
+) -> dict:
+    """Lee un CSV ECG, preprocesa y predice 12 probabilidades.
+
+    El preprocesamiento (modo de normalización/filtrado) se elige según el
+    ``label_schema`` del checkpoint para no mezclar v1 con v2. Si el CSV fue
+    generado por la webapp (marcador ``# Preprocessed:``) y el modo coincide,
+    se reutiliza tal cual sin reprocesar.
+    """
     torch_device = get_device(device)
     model, checkpoint, class_names = load_model(checkpoint_path, torch_device)
-    raw, sampling_rate, lead_names = load.read_csv_ecg(csv_path)
-    processed = load.preprocess_ecg_array(raw, sampling_rate=sampling_rate, lead_names=lead_names)
-    probabilities = predict_array(model, processed, torch_device)
+    pre = preprocessing_for_checkpoint(checkpoint)
+    raw, sampling_rate, lead_names, csv_meta = load.read_csv_ecg(csv_path)
+    marker = (csv_meta.get("preprocessed_mode") or "").lower()
+    windows: np.ndarray
+    if marker and marker == str(pre["norm_mode"]).lower() and raw.shape == (load.WINDOW_LENGTH, load.NUM_LEADS):
+        windows = raw[None, ...]
+        reused = True
+    else:
+        units = load.infer_csv_units(raw)
+        windows, _starts = load.preprocess_to_windows(
+            raw,
+            sampling_rate=sampling_rate,
+            lead_names=lead_names,
+            windows_max=max(1, int(windows_max)),
+            norm_mode=pre["norm_mode"],
+            units=units,
+            bandpass=bool(pre["bandpass"]),
+        )
+        reused = False
+    if windows.shape[0] == 1:
+        probabilities = predict_array(model, windows[0], torch_device)
+        per_window = probabilities[None, :]
+    else:
+        probabilities, per_window = predict_windows(model, windows, torch_device, aggregate=aggregate)
     predictions = (probabilities >= threshold).astype(np.uint8)
     rows = [
         {
@@ -165,7 +290,15 @@ def predict_csv(checkpoint_path: str | Path, csv_path: str | Path, threshold: fl
         "rows": rows,
         "sampling_rate": sampling_rate,
         "lead_names": lead_names,
-        "processed_shape": list(processed.shape),
+        "label_schema": checkpoint.get("label_schema"),
+        "norm_mode": pre["norm_mode"],
+        "bandpass": bool(pre["bandpass"]),
+        "csv_preprocessed_marker": marker or None,
+        "csv_reused_without_reprocessing": bool(reused),
+        "num_windows": int(windows.shape[0]),
+        "aggregate": str(aggregate),
+        "per_window_probabilities": per_window,
+        "processed_shape": list(windows.shape),
     }
 
 
@@ -173,16 +306,26 @@ def predict_csv(checkpoint_path: str | Path, csv_path: str | Path, threshold: fl
 def predict_hdf5(
     checkpoint_path: str | Path,
     h5_path: str | Path,
-    batch_size: int = 8,
-    num_workers: int = 2,
+    batch_size: int = 64,
+    num_workers: int = 0,
     device: str = "auto",
     amp: bool = True,
+    preload: bool = True,
+    max_preload_gb: float = 16,
+    prefetch_factor: int = 4,
 ):
-    """Predice todo un HDF5. Devuelve probabilidades, etiquetas y metadata."""
+    """Predice todo un HDF5. Devuelve probabilidades, etiquetas y metadata.
+
+    Con ``preload=True`` el HDF5 se carga a RAM una vez (rápido). Combine con
+    ``num_workers=0`` en Windows para no duplicar la RAM por worker.
+    """
     torch_device = get_device(device)
     model, checkpoint, class_names = load_model(checkpoint_path, torch_device)
-    dataset = HDF5PredictionDataset(h5_path)
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=(torch_device.type == "cuda"))
+    dataset = HDF5PredictionDataset(h5_path, preload=preload, max_preload_gb=max_preload_gb)
+    _check_hdf5_checkpoint_compat(h5_path, checkpoint)
+    loader = DataLoader(dataset, **_loader_kwargs(
+        batch_size, num_workers, pin_memory=(torch_device.type == "cuda"),
+        prefetch_factor=prefetch_factor))
 
     all_prob, all_true = [], []
     use_amp = amp and torch_device.type == "cuda"
@@ -205,6 +348,30 @@ def predict_hdf5(
     }
 
 
+def _check_hdf5_checkpoint_compat(h5_path: str | Path, checkpoint: dict) -> None:
+    """Advierte si el HDF5 y el checkpoint usan esquemas distintos (v1 vs v2)."""
+    try:
+        import h5py
+        with h5py.File(util.resolve_path(h5_path), "r") as h5:
+            h5_schema = h5.attrs.get("label_schema", None)
+            h5_norm = h5.attrs.get("norm_mode", h5.attrs.get("normalization", "?"))
+            if isinstance(h5_schema, bytes):
+                h5_schema = h5_schema.decode("utf-8", errors="replace")
+            if isinstance(h5_norm, bytes):
+                h5_norm = h5_norm.decode("utf-8", errors="replace")
+    except Exception:
+        return
+    ckpt_schema = checkpoint.get("label_schema")
+    if h5_schema is not None and ckpt_schema is not None and str(h5_schema) != str(ckpt_schema):
+        print(
+            "AVISO DE COMPATIBILIDAD: el HDF5 y el checkpoint usan esquemas distintos:\n"
+            f"  HDF5 label_schema={h5_schema!r} norm={h5_norm!r}\n"
+            f"  checkpoint label_schema={ckpt_schema!r}\n"
+            "Las métricas/predicciones resultantes NO son válidas. Regenere el HDF5 "
+            "con el esquema del checkpoint (o reentrene) y vuelva a evaluar."
+        )
+
+
 def rows_to_dataframe(rows: list[dict]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
@@ -215,14 +382,22 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("input", help="CSV ECG o HDF5")
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--device", choices=["auto", "cuda", "cpu"], default="auto")
-    parser.add_argument("--batch-size", type=int, default=8)
-    parser.add_argument("--num-workers", type=int, default=2)
+    parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--num-workers", type=int, default=0,
+                        help="Workers del DataLoader (0 = recomendado con preload en RAM)")
+    parser.add_argument("--no-preload", action="store_true",
+                        help="Desactiva la precarga del HDF5 a RAM (lectura por disco, lento)")
+    parser.add_argument("--windows-max", type=int, default=4,
+                        help="Ventanas de 10 s para CSV largos (1 = recorte centrado)")
+    parser.add_argument("--aggregate", choices=["max", "mean", "median"], default="max",
+                        help="Agregación multi-ventana")
     parser.add_argument("--output", default=None, help="CSV/JSON de salida")
     args = parser.parse_args(argv)
 
     input_path = Path(args.input)
     if input_path.suffix.lower() == ".h5":
-        result = predict_hdf5(args.checkpoint, input_path, batch_size=args.batch_size, num_workers=args.num_workers, device=args.device)
+        result = predict_hdf5(args.checkpoint, input_path, batch_size=args.batch_size, num_workers=args.num_workers,
+                              device=args.device, preload=not args.no_preload)
         probs = result["probabilities"]
         payload = {"record_name": result["record_names"]}
         for i, name in enumerate(result["class_names"]):
@@ -235,7 +410,10 @@ def main(argv: list[str] | None = None) -> None:
         else:
             print(df.head().to_string(index=False))
     else:
-        result = predict_csv(args.checkpoint, input_path, threshold=args.threshold, device=args.device)
+        result = predict_csv(args.checkpoint, input_path, threshold=args.threshold, device=args.device,
+                             windows_max=args.windows_max, aggregate=args.aggregate)
+        print(f"Esquema={result.get('label_schema')} norm={result.get('norm_mode')} "
+              f"ventanas={result.get('num_windows')} agreg={result.get('aggregate')}")
         df = rows_to_dataframe(result["rows"])
         if args.output:
             out = Path(args.output)

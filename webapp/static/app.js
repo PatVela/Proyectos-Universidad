@@ -40,15 +40,18 @@ const I18N = {
     "detail.sub": "Ficha técnica del modelo, preprocesamiento, umbrales, comparación con etiquetas reales y métricas exportadas.",
     "detail.emptyTitle": "Aún no hay detalle de predicción",
     "detail.emptyBody": "Después de analizar un ECG se completará la ficha del registro.",
-    "detail.method": "Enfoque: la señal se ordena a 12 derivaciones estándar, se remuestrea a 500 Hz, se normaliza por derivación, se ajusta a 5000 muestras y se clasifica con salidas sigmoid independientes.",
+    "detail.method": "Enfoque: la señal se ordena a 12 derivaciones estándar, se convierte a milivoltios con la ganancia del header, se filtra (pasa-banda 0.5–50 Hz), se recorta a ±5 mV, se remuestrea a 500 Hz, se ajusta a 5000 muestras y se clasifica con salidas sigmoid independientes y umbrales por clase.",
     "detail.recordSheet": "Ficha del registro analizado",
     "detail.probabilities": "Probabilidades por clase",
     "detail.modelSheet": "Ficha técnica del modelo cargado automáticamente",
     "detail.schema": "Esquema de clases SNOMED-CT",
     "detail.metrics": "Métricas de evaluación",
-    "detail.metricsFrom": "Resultados leídos desde",
+    "detail.metricsNote": "Métricas calculadas por el script de evaluación sobre validación y test; la tabla por clase muestra el split test.",
     "detail.metricsPending": "Métricas pendientes.",
     "detail.metricsCmd": "Después de entrenar, ejecute evaluación para llenar esta sección:",
+    "detail.metricsHint": "Ese comando también calibra los umbrales por clase que la app detecta automáticamente.",
+    "detail.bestClass": "Mejor clase (F1 test)",
+    "detail.worstClass": "Peor clase (F1 test)",
     "tech.arch": "Arquitectura",
     "tech.input": "Entrada",
     "tech.classes": "Clases",
@@ -58,6 +61,13 @@ const I18N = {
     "tech.params": "Parámetros",
     "tech.loss": "Pérdida",
     "tech.activation": "Activación",
+    "tech.schema": "Esquema de etiquetas",
+    "tech.norm": "Normalización",
+    "tech.normPhysical": "physical: mV + pasa-banda 0.5–50 Hz + recorte ±5 mV",
+    "tech.normLegacy": "z-score por derivación (esquema previo)",
+    "tech.thresholds": "Umbrales",
+    "tech.thresholdsCal": "calibrados por clase",
+    "tech.thresholdsGlobal": "global 0.5 (respaldo)",
     "table.class": "Clase",
     "table.description": "Descripción",
     "table.codes": "Códigos",
@@ -77,6 +87,10 @@ const I18N = {
     "exp.robustCmd": "Ejecute el experimento reproducible de robustez:",
     "exp.perturbation": "Perturbación",
     "exp.level": "Nivel",
+    "exp.compareNote": "Comparación justa: mismo dataset, split, preprocesamiento y métricas para ambas arquitecturas. La estrella marca el mejor F1 macro en test.",
+    "exp.robustNote": "Cada fila aplica una degradación controlada al test y mide cuánto cae el F1 macro frente a la señal limpia.",
+    "exp.deltaCol": "ΔF1 vs limpio",
+    "exp.biggestDrop": "Mayor caída vs señal limpia",
     "footer.author": "Autor:",
     "footer.advisor": "Asesor:",
     "footer.model": "Modelo",
@@ -173,15 +187,18 @@ const I18N = {
     "detail.sub": "Model sheet, preprocessing, thresholds, true-label comparison and exported metrics.",
     "detail.emptyTitle": "No prediction detail yet",
     "detail.emptyBody": "After analyzing an ECG, the record sheet will be filled in.",
-    "detail.method": "Method: the signal is ordered into 12 standard leads, resampled to 500 Hz, normalized per lead, fixed to 5000 samples and classified with independent sigmoid outputs.",
+    "detail.method": "Method: the signal is ordered into 12 standard leads, converted to millivolts with the header gain, filtered (0.5–50 Hz bandpass), clipped to ±5 mV, resampled to 500 Hz, fixed to 5000 samples and classified with independent sigmoid outputs and per-class thresholds.",
     "detail.recordSheet": "Analyzed record sheet",
     "detail.probabilities": "Per-class probabilities",
     "detail.modelSheet": "Automatically loaded model sheet",
     "detail.schema": "SNOMED-CT class schema",
     "detail.metrics": "Evaluation metrics",
-    "detail.metricsFrom": "Results loaded from",
+    "detail.metricsNote": "Metrics computed by the evaluation script on validation and test; the per-class table shows the test split.",
     "detail.metricsPending": "Metrics pending.",
     "detail.metricsCmd": "After training, run evaluation to fill this section:",
+    "detail.metricsHint": "That command also calibrates the per-class thresholds that the app detects automatically.",
+    "detail.bestClass": "Best class (test F1)",
+    "detail.worstClass": "Worst class (test F1)",
     "tech.arch": "Architecture",
     "tech.input": "Input",
     "tech.classes": "Classes",
@@ -191,6 +208,13 @@ const I18N = {
     "tech.params": "Parameters",
     "tech.loss": "Loss",
     "tech.activation": "Activation",
+    "tech.schema": "Label schema",
+    "tech.norm": "Normalization",
+    "tech.normPhysical": "physical: mV + 0.5–50 Hz bandpass + ±5 mV clip",
+    "tech.normLegacy": "per-lead z-score (legacy schema)",
+    "tech.thresholds": "Thresholds",
+    "tech.thresholdsCal": "class-calibrated",
+    "tech.thresholdsGlobal": "global 0.5 (fallback)",
     "table.class": "Class",
     "table.description": "Description",
     "table.codes": "Codes",
@@ -210,6 +234,10 @@ const I18N = {
     "exp.robustCmd": "Run the reproducible robustness experiment:",
     "exp.perturbation": "Perturbation",
     "exp.level": "Level",
+    "exp.compareNote": "Fair comparison: same dataset, split, preprocessing and metrics for both architectures. The star marks the best test macro F1.",
+    "exp.robustNote": "Each row applies a controlled degradation to the test set and measures how much macro F1 drops versus the clean signal.",
+    "exp.deltaCol": "ΔF1 vs clean",
+    "exp.biggestDrop": "Largest drop vs clean signal",
     "footer.author": "Author:",
     "footer.advisor": "Advisor:",
     "footer.model": "Model",
@@ -357,6 +385,13 @@ function shortPath(path) {
   if (!text) return "—";
   const parts = text.split("/");
   return parts.slice(-3).join("/");
+}
+
+function baseName(path) {
+  const text = String(path || "").replace(/\\/g, "/");
+  if (!text) return "—";
+  const parts = text.split("/");
+  return parts[parts.length - 1] || text;
 }
 
 function listOrNone(values) {
@@ -609,7 +644,7 @@ function renderSummary(result) {
     summaryBox.innerHTML += `<span class="chip" style="background:#64748b">${noneText}</span>`;
   }
   const rule = result.using_class_thresholds
-    ? `${tr("summary.ruleClassThresholds")} (${escapeHtml(shortPath(result.threshold_source))})`
+    ? `${tr("summary.ruleClassThresholds")} (${escapeHtml(baseName(result.threshold_source))})`
     : `${tr("summary.ruleGlobalThreshold")} ${escapeHtml(result.threshold)}`;
   summaryBox.innerHTML += `<p class="hint muted summary-hint">${tr("summary.model")}: <strong>${escapeHtml(result.model_type || "—")}</strong><br>${tr("summary.rule")}: ${rule}</p>`;
 }
@@ -693,22 +728,24 @@ function renderTechnical(result) {
     row(LANG === "es" ? "Tipo de entrada" : "Input type", result.input_type),
     row(LANG === "es" ? "Archivos fuente" : "Source files", (result.source_files || []).map(shortPath).join(" | ")),
     row(LANG === "es" ? "Modelo" : "Model", result.model_type),
-    row("Checkpoint", result.model_path),
+    row("Checkpoint", shortPath(result.model_path)),
     row(LANG === "es" ? "Época checkpoint" : "Checkpoint epoch", result.checkpoint_epoch),
     row("Val loss", result.checkpoint_val_loss),
     row("Threshold", result.using_class_thresholds ? (LANG === "es" ? "calibrado por clase" : "class-calibrated") : result.threshold),
-    row(LANG === "es" ? "Fuente de umbrales" : "Threshold source", result.threshold_source || "—"),
+    row(LANG === "es" ? "Fuente de umbrales" : "Threshold source", baseName(result.threshold_source)),
     row(LANG === "es" ? "Shape procesado" : "Processed shape", Array.isArray(result.processed_shape) ? result.processed_shape.join(" × ") : result.processed_shape),
     row(LANG === "es" ? "Frecuencia original" : "Original sampling rate", result.original_sampling_rate ? `${result.original_sampling_rate} Hz` : "—"),
     row(LANG === "es" ? "Frecuencia objetivo" : "Target sampling rate", result.target_sampling_rate ? `${result.target_sampling_rate} Hz` : "—"),
     row(LANG === "es" ? "Ventana" : "Window", `${result.window_seconds} s · ${result.input_length} samples`),
+    row(LANG === "es" ? "Ventanas analizadas" : "Analyzed windows", result.num_windows ? `${result.num_windows} × ${result.window_seconds} s · ${result.window_aggregation || "max"}` : "—"),
     row(LANG === "es" ? "Derivaciones" : "Leads", Array.isArray(result.lead_names) ? result.lead_names.join(", ") : result.lead_names),
     row("DX", result.dx_codes && result.dx_codes.length ? result.dx_codes.join(", ") : "—"),
     row(LANG === "es" ? "Clases reales" : "True classes", cmp.available ? listOrNone(cmp.true_classes) : "—"),
     row(LANG === "es" ? "Clases predichas" : "Predicted classes", cmp.predicted_classes ? listOrNone(cmp.predicted_classes) : "—"),
-    row(LANG === "es" ? "Coincidencia exacta" : "Exact match", cmp.available ? (cmp.exact_match ? "Sí" : "No") : "—"),
+    row(LANG === "es" ? "Coincidencia exacta" : "Exact match", cmp.available ? (cmp.exact_match ? (LANG === "es" ? "Sí" : "Yes") : "No") : "—"),
     row("Fallback NSR", result.normal_fallback && result.normal_fallback.applied ? `${LANG === "es" ? "aplicado" : "applied"} · min=${result.normal_fallback.min_nsr_probability}` : (LANG === "es" ? "no aplicado" : "not applied")),
     row(LANG === "es" ? "Preprocesamiento" : "Preprocessing", details.preprocessing),
+    row(LANG === "es" ? "Normalización" : "Normalization", details.norm_mode || "—"),
     row(LANG === "es" ? "Estilo de trazado" : "Trace style", details.plot_style),
     row(LANG === "es" ? "Esquema" : "Schema", details.label_schema),
     row(LANG === "es" ? "Activación" : "Activation", details.activation),

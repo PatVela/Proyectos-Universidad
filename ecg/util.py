@@ -100,6 +100,10 @@ def save_checkpoint(
     """Guarda checkpoint PyTorch completo."""
     import torch
 
+    try:
+        from ecg.load import LABEL_SCHEMA as _schema
+    except Exception:
+        _schema = "cinc2020_12_grouped_snomed_v2"
     payload = {
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict() if optimizer is not None else None,
@@ -109,7 +113,7 @@ def save_checkpoint(
         "config": config or {},
         "class_names": class_names or [],
         "num_classes": len(class_names or []),
-        "label_schema": "cinc2020_12_grouped_snomed",
+        "label_schema": _schema,
         "problem_type": "multilabel_sigmoid_bce",
     }
     if extra:
@@ -135,23 +139,51 @@ def find_checkpoints(models_dir: str | os.PathLike) -> list[Path]:
     return sorted(models_dir.rglob("*.pt"))
 
 
+def checkpoint_sort_key(path: Path):
+    """Clave de ordenamiento: reales antes que sintéticos, best.pt primero, menor val_loss.
+
+    Evita el fallo silencioso de auto-seleccionar un checkpoint de smoke-test
+    sintético (val_loss artificialmente baja) en lugar del modelo CINC2020 real.
+    """
+    text = str(path).lower()
+    is_synth = 1 if "synth" in text else 0
+    is_best_name = 0 if path.name.lower() == "best.pt" else 1
+    try:
+        ckpt = load_checkpoint(path, map_location="cpu")
+        value = ckpt.get("val_loss", None)
+        loss = float(value) if value is not None else float("inf")
+    except Exception:
+        try:
+            loss = float(path.name.split("-")[0])
+        except Exception:
+            loss = float("inf")
+    return (is_synth, is_best_name, loss, str(path))
+
+
 def best_checkpoint(models_dir: str | os.PathLike) -> Path | None:
-    """Busca checkpoint con menor ``val_loss`` interna o menor prefijo numérico."""
+    """Busca el mejor checkpoint: reales primero, ``best.pt`` primero, menor ``val_loss``."""
     checkpoints = find_checkpoints(models_dir)
     if not checkpoints:
         return None
+    return min(checkpoints, key=checkpoint_sort_key)
 
-    def score(path: Path):
+
+def list_checkpoints_info(models_dir: str | os.PathLike) -> list[dict]:
+    """Lista checkpoints con metadatos para diagnóstico (ordenados por preferencia)."""
+    checkpoints = sorted(find_checkpoints(models_dir), key=checkpoint_sort_key)
+    rows = []
+    for order, path in enumerate(checkpoints):
         try:
             ckpt = load_checkpoint(path, map_location="cpu")
-            value = ckpt.get("val_loss", None)
-            if value is not None:
-                return float(value)
-        except Exception:
-            pass
-        try:
-            return float(path.name.split("-")[0])
-        except Exception:
-            return float("inf")
-
-    return min(checkpoints, key=score)
+            rows.append({
+                "rank": order,
+                "path": str(path),
+                "val_loss": ckpt.get("val_loss"),
+                "epoch": ckpt.get("epoch"),
+                "label_schema": ckpt.get("label_schema"),
+                "class_names": ckpt.get("class_names"),
+                "is_regular_conv": (ckpt.get("config") or {}).get("is_regular_conv"),
+            })
+        except Exception as exc:
+            rows.append({"rank": order, "path": str(path), "error": str(exc)})
+    return rows

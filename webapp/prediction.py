@@ -24,11 +24,34 @@ import pandas as pd
 from werkzeug.utils import secure_filename
 
 from ecg import load, util
-from ecg.predict import load_model, predict_array
+from ecg.predict import load_model, predict_array, predict_windows, preprocessing_for_checkpoint
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LEADS = load.STANDARD_LEAD_ORDER
+
+# Traducción de nombres v2 -> v1 para comparar contra checkpoints legacy.
+V2_TO_V1_CLASS = {"AxisDev": "LAD", "BBB": "RBBB"}
+SLIDING_WINDOWS_MAX = 4
+SLIDING_AGGREGATE = "max"
+
+
+def _group_for_class(name: str) -> dict:
+    for group in load.CLASS_GROUPS_12:
+        if group["name"] == name:
+            return group
+    for group in load.CLASS_GROUPS_12_V1_LEGACY:
+        if group["name"] == name:
+            return {"name": name, "display_name": name, "description": "", "codes": group["codes"]}
+    return {"name": name, "display_name": name, "description": "", "codes": []}
+
+
+def translate_classes_to_checkpoint(names: Iterable[str], class_names: list[str]) -> list[str]:
+    """Traduce clases v2 a nombres v1 si el checkpoint es legacy."""
+    names = list(names)
+    if "AxisDev" in class_names or "BBB" in class_names or "LAD" not in class_names:
+        return names
+    return [V2_TO_V1_CLASS.get(n, n) for n in names]
 
 
 # ---------------------------------------------------------------------------
@@ -106,36 +129,69 @@ def _find_file_by_suffix(paths: Iterable[Path], suffix: str) -> Path | None:
     return matches[0]
 
 
-def write_processed_csv(signal: np.ndarray, output_path: str | Path) -> Path:
-    """Guarda señal preprocesada (5000,12) como CSV descargable."""
+def write_processed_csv(signal: np.ndarray, output_path: str | Path, norm_mode: str | None = None) -> Path:
+    """Guarda señal preprocesada (5000,12) como CSV descargable.
+
+    Incluye marcador ``# Preprocessed: <norm_mode>`` para que una
+    re-subida del CSV convertido NO se reprocese por segunda vez.
+    """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    df = pd.DataFrame(signal, columns=LEADS)
+    df = pd.DataFrame(np.asarray(signal), columns=LEADS)
     with output_path.open("w", encoding="utf-8", newline="") as handle:
         handle.write(f"# Sampling Rate: {load.TARGET_FS} Hz\n")
+        if norm_mode:
+            handle.write(f"# Preprocessed: {norm_mode}\n")
         df.to_csv(handle, index=False)
     return output_path
 
 
-def prepare_saved_input(saved_paths: list[Path], result_dir: str | Path) -> dict:
-    """Devuelve señal preprocesada y metadata desde CSV o par .hea+.mat."""
+def prepare_saved_input(
+    saved_paths: list[Path],
+    result_dir: str | Path,
+    norm_mode: str | None = None,
+    bandpass: bool | None = None,
+) -> dict:
+    """Devuelve ventanas preprocesadas y metadata desde CSV o par .hea+.mat.
+
+    ``processed_windows`` tiene forma ``(K, 5000, 12)``; ``processed_signal``
+    es la ventana central (gráfico/CSV). El modo de normalización debe venir
+    del checkpoint (ver :func:`ecg.predict.preprocessing_for_checkpoint`).
+    """
     result_dir = Path(result_dir)
     result_dir.mkdir(parents=True, exist_ok=True)
+    norm_mode = norm_mode or load.DEFAULT_NORM_MODE
+    bandpass = True if bandpass is None else bool(bandpass)
 
     csv_path = _find_file_by_suffix(saved_paths, ".csv")
     hea_path = _find_file_by_suffix(saved_paths, ".hea")
     mat_path = _find_file_by_suffix(saved_paths, ".mat")
 
     if csv_path is not None and len(saved_paths) == 1:
-        raw, sampling_rate, lead_names = load.read_csv_ecg(csv_path)
-        processed = load.preprocess_ecg_array(raw, sampling_rate=sampling_rate, lead_names=lead_names)
+        raw, sampling_rate, lead_names, csv_meta = load.read_csv_ecg(csv_path)
+        marker = (csv_meta.get("preprocessed_mode") or "").lower()
+        if marker and marker == str(norm_mode).lower() and raw.shape == (load.WINDOW_LENGTH, load.NUM_LEADS):
+            windows = raw[None, ...].astype(np.float32, copy=False)
+            reused = True
+        else:
+            units = load.infer_csv_units(raw)
+            windows, _starts = load.preprocess_to_windows(
+                raw, sampling_rate=sampling_rate, lead_names=lead_names,
+                windows_max=SLIDING_WINDOWS_MAX, norm_mode=norm_mode,
+                units=units, bandpass=bandpass,
+            )
+            reused = False
+        center = windows.shape[0] // 2
         return {
             "input_type": "csv",
             "record_name": csv_path.stem,
             "source_files": [str(csv_path)],
             "csv_path": csv_path,
             "converted_csv_path": None,
-            "processed_signal": processed,
+            "processed_signal": windows[center],
+            "processed_windows": windows,
+            "csv_reused_without_reprocessing": reused,
+            "csv_preprocessed_marker": marker or None,
             "original_sampling_rate": sampling_rate,
             "lead_names": lead_names,
             "dx_codes": [],
@@ -149,9 +205,16 @@ def prepare_saved_input(saved_paths: list[Path], result_dir: str | Path) -> dict
                 "El archivo .hea y el archivo .mat deben pertenecer al mismo registro "
                 f"(recibidos: {hea_path.name} y {mat_path.name})."
             )
-        processed, meta = load.load_wfdb_record(mat_path, hea_path)
+        windows, meta = load.load_wfdb_record_windows(
+            mat_path, hea_path, windows_max=SLIDING_WINDOWS_MAX,
+            norm_mode=norm_mode, bandpass=bandpass,
+        )
         record_name = meta.get("record_name") or hea_path.stem or mat_path.stem
-        converted_csv = write_processed_csv(processed, result_dir / f"{secure_filename(record_name)}_convertido.csv")
+        center = windows.shape[0] // 2
+        converted_csv = write_processed_csv(
+            windows[center], result_dir / f"{secure_filename(record_name)}_convertido.csv",
+            norm_mode=norm_mode,
+        )
         dx_codes = meta.get("dx_codes", [])
         return {
             "input_type": "wfdb_hea_mat",
@@ -159,7 +222,9 @@ def prepare_saved_input(saved_paths: list[Path], result_dir: str | Path) -> dict
             "source_files": [str(hea_path), str(mat_path)],
             "csv_path": converted_csv,
             "converted_csv_path": converted_csv,
-            "processed_signal": processed,
+            "processed_signal": windows[center],
+            "processed_windows": windows,
+            "window_starts": meta.get("window_starts", [0]),
             "original_sampling_rate": meta.get("sampling_freq", load.TARGET_FS),
             "lead_names": meta.get("lead_names", LEADS),
             "dx_codes": dx_codes,
@@ -189,6 +254,7 @@ def parse_reference_label_text(value: str | Iterable[str] | None) -> list[str]:
         parts = list(value)
 
     upper_to_name = {name.upper(): name for name in load.CLASS_NAMES}
+    upper_to_name.update({"LAD": "AxisDev", "RBBB": "BBB"})  # alias legacy v1
     display_to_name = {group["display_name"].upper(): group["name"] for group in load.CLASS_GROUPS_12}
     found: list[str] = []
     seen = set()
@@ -373,7 +439,7 @@ def threshold_values_for_class_names(
 def _prediction_rows(probabilities: np.ndarray, class_names: list[str], thresholds: np.ndarray) -> list[dict]:
     rows = []
     for i, prob in enumerate(probabilities):
-        group = load.CLASS_GROUPS_12[i]
+        group = _group_for_class(class_names[i])
         thr = float(thresholds[i])
         prob_f = float(prob)
         rows.append({
@@ -451,13 +517,23 @@ def run_prediction_from_saved_paths(
     result_dir = Path(result_dir)
     result_dir.mkdir(parents=True, exist_ok=True)
 
-    prepared = prepare_saved_input(saved_paths, result_dir)
     resolved_model = resolve_model_path(model_path=model_path, saved_dir=saved_dir)
 
     import torch
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model, checkpoint, class_names = load_model(resolved_model, device=device)
-    probabilities = predict_array(model, prepared["processed_signal"], device=device)
+    pre = preprocessing_for_checkpoint(checkpoint)
+    ckpt_schema = checkpoint.get("label_schema")
+    prepared = prepare_saved_input(saved_paths, result_dir, norm_mode=pre["norm_mode"], bandpass=pre["bandpass"])
+
+    windows = np.asarray(prepared.get("processed_windows", prepared["processed_signal"][None, ...]), dtype=np.float32)
+    if windows.shape[0] == 1:
+        probabilities = predict_array(model, windows[0], device=device)
+        per_window = probabilities[None, :]
+        aggregate_used = "single"
+    else:
+        probabilities, per_window = predict_windows(model, windows, device=device, aggregate=SLIDING_AGGREGATE)
+        aggregate_used = SLIDING_AGGREGATE
     threshold_values = threshold_values_for_class_names(class_names, threshold=threshold, thresholds=thresholds)
     rows = _prediction_rows(probabilities, class_names, threshold_values)
     raw_sorted_rows = sorted(rows, key=lambda item: item["probability"], reverse=True)
@@ -471,11 +547,13 @@ def run_prediction_from_saved_paths(
 
     manual_raw = clean_path_text(reference_labels) if isinstance(reference_labels, (str, os.PathLike)) else ""
     manual_true = parse_reference_label_text(reference_labels)
+    ckpt_matched = translate_classes_to_checkpoint(prepared.get("matched_classes", []), class_names)
     if manual_raw:
-        label_comparison = build_label_comparison(manual_true, sorted_rows, "manual", manual_raw=manual_raw)
+        label_comparison = build_label_comparison(
+            translate_classes_to_checkpoint(manual_true, class_names), sorted_rows, "manual", manual_raw=manual_raw)
     elif prepared.get("true_label_source") == "wfdb_header_dx":
         label_comparison = build_label_comparison(
-            prepared.get("matched_classes", []),
+            ckpt_matched,
             sorted_rows,
             "wfdb_header_dx",
             dx_codes=prepared.get("dx_codes", []),
@@ -527,14 +605,26 @@ def run_prediction_from_saved_paths(
         "original_sampling_rate": prepared.get("original_sampling_rate"),
         "lead_names": prepared.get("lead_names"),
         "processed_shape": list(prepared["processed_signal"].shape),
+        "num_windows": int(windows.shape[0]),
+        "window_aggregation": aggregate_used,
+        "window_starts": [int(s) for s in prepared.get("window_starts", [0])],
+        "per_window_probabilities": per_window.tolist(),
+        "norm_mode": pre["norm_mode"],
+        "bandpass": bool(pre["bandpass"]),
+        "label_schema": ckpt_schema or load.LABEL_SCHEMA,
         "dx_codes": prepared.get("dx_codes", []),
-        "matched_classes": prepared.get("matched_classes", []),
+        "matched_classes": ckpt_matched,
         "label_comparison": label_comparison,
         "patient_age": age_clean,
         "patient_sex": prepared.get("sex", "Unknown"),
         "technical_details": {
-            "preprocessing": "12 derivaciones -> reordenamiento estándar -> 500 Hz -> z-score por derivación -> 5000 muestras",
-            "label_schema": "cinc2020_12_grouped_snomed",
+            "preprocessing": (
+                f"12 derivaciones -> reorden estándar -> 500 Hz -> {pre['norm_mode']}"
+                f"{' + bandpass 0.5-50Hz' if pre['bandpass'] else ''} -> "
+                f"{windows.shape[0]} ventana(s) de 5000 ({aggregate_used})"
+            ),
+            "label_schema": ckpt_schema or load.LABEL_SCHEMA,
+            "norm_mode": pre["norm_mode"],
             "activation": "sigmoid por clase",
             "loss": "BCEWithLogitsLoss durante entrenamiento",
             "decision_rule": (

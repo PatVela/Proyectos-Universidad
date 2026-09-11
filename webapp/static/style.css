@@ -271,3 +271,7 @@ button:disabled { opacity: .55; cursor: not-allowed; transform: none; filter: no
   #plotDiv { min-height: 340px; }
   .panel { padding: 1.2rem 1.2rem; }
 }
+
+/* Resaltados dentro de tablas de detalle y experimentos */
+.iv-table .badge { margin-left: .35rem; }
+.iv-table td .badge.ok { white-space: nowrap; }

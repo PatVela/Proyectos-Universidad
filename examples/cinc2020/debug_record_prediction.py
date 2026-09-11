@@ -75,6 +75,11 @@ def find_record_in_hdf5(config: dict, record_name: str):
             if names is None:
                 continue
             decoded = [x.decode("utf-8", errors="replace") if isinstance(x, bytes) else str(x) for x in names[:]]
+            h5_classes = h5.attrs.get("classes", None)
+            if h5_classes is not None:
+                h5_classes = [x.decode("utf-8", errors="replace") if isinstance(x, bytes) else str(x) for x in h5_classes]
+            else:
+                h5_classes = load.CLASS_NAMES
             for i, name in enumerate(decoded):
                 if name.lower() == target:
                     signal = np.asarray(h5["signals"][i], dtype=np.float32)
@@ -85,7 +90,8 @@ def find_record_in_hdf5(config: dict, record_name: str):
                         "index": i,
                         "signal": signal,
                         "label": label,
-                        "true_classes": [load.CLASS_NAMES[j] for j, active in enumerate(label) if active],
+                        "h5_classes": list(h5_classes),
+                        "true_classes": [h5_classes[j] for j, active in enumerate(label) if active],
                     }
     return None
 
@@ -133,6 +139,7 @@ def main(argv=None):
     config = json.loads(util.resolve_path(args.config).read_text(encoding="utf-8"))
     device = predict.get_device(args.device)
     model, checkpoint, class_names = predict.load_model(args.checkpoint, device=device)
+    pre = predict.preprocessing_for_checkpoint(checkpoint)
     thresholds_dict = read_thresholds(args.thresholds, class_names)
     thresholds = threshold_values_for_class_names(class_names, threshold=0.5, thresholds=thresholds_dict)
 
@@ -141,6 +148,7 @@ def main(argv=None):
     print("=" * 78)
     print("Registro     :", args.record)
     print("Checkpoint   :", util.resolve_path(args.checkpoint))
+    print("Esquema ckpt :", checkpoint.get("label_schema"), "| norm:", pre["norm_mode"], "| bandpass:", pre["bandpass"])
     print("Época/val_loss:", checkpoint.get("epoch"), checkpoint.get("val_loss"))
     print("Device       :", device)
     print("Thresholds   :", args.thresholds or "fallback global 0.5")
@@ -150,8 +158,11 @@ def main(argv=None):
     wfdb_signal = None
 
     if args.hea and args.mat:
-        wfdb_signal, meta = load.load_wfdb_record(args.mat, args.hea)
+        wfdb_signal, meta = load.load_wfdb_record(
+            args.mat, args.hea, norm_mode=pre["norm_mode"], bandpass=pre["bandpass"])
         true_classes = load.matched_class_names(meta.get("dx_codes", []))
+        if "LAD" in class_names and "AxisDev" not in class_names:
+            true_classes = [{"AxisDev": "LAD", "BBB": "RBBB"}.get(c, c) for c in true_classes]
         prob = predict.predict_array(model, wfdb_signal, device=device)
         rows, raw_pos, final_pos, fallback = rows_from_probabilities(prob, class_names, thresholds, args.normal_fallback_min_prob)
         print_table("WEBAPP/WFDB preprocesado", rows)
@@ -163,6 +174,7 @@ def main(argv=None):
         print("Exact match   :", cmp.get("exact_match"), "F1=", cmp.get("f1"), "Jaccard=", cmp.get("jaccard"))
 
     if h5_item is not None:
+        print(f"\nHDF5 {h5_item['path']} clases={h5_item.get('h5_classes')}")
         prob = predict.predict_array(model, h5_item["signal"], device=device)
         rows, raw_pos, final_pos, fallback = rows_from_probabilities(prob, class_names, thresholds, args.normal_fallback_min_prob)
         print_table(f"HDF5 {h5_item['split']} index={h5_item['index']}", rows)

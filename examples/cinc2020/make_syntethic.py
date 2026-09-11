@@ -24,7 +24,18 @@ def write_split(path: Path, n: int, seed: int):
 
     rng = np.random.default_rng(seed)
     path.parent.mkdir(parents=True, exist_ok=True)
-    signals = rng.normal(0, 1, size=(n, load.WINDOW_LENGTH, load.NUM_LEADS)).astype(np.float32)
+    # Escala tipo mV (coherente con norm_mode=physical): fondo ~N(0, 0.2) mV
+    # más "complejos QRS" sintéticos para que haya estructura aprendible.
+    signals = rng.normal(0, 0.2, size=(n, load.WINDOW_LENGTH, load.NUM_LEADS)).astype(np.float32)
+    for i in range(n):
+        for beat in range(6, load.WINDOW_LENGTH - 6, 500):
+            amp = rng.uniform(0.5, 1.5) * (1 if rng.random() < 0.8 else -1)
+            width = int(rng.integers(8, 20))
+            lo, hi = max(0, beat - width), min(load.WINDOW_LENGTH, beat + width)
+            bump = np.exp(-0.5 * ((np.arange(lo, hi) - beat) / (width / 2.5)) ** 2)
+            lead = int(rng.integers(0, load.NUM_LEADS))
+            signals[i, lo:hi, lead] += (amp * bump).astype(np.float32)
+    signals = np.clip(signals, -load.PHYSICAL_CLIP_MV, load.PHYSICAL_CLIP_MV)
     labels = np.zeros((n, load.NUM_CLASSES), dtype=np.float32)
     for i in range(n):
         labels[i, i % load.NUM_CLASSES] = 1
@@ -32,6 +43,18 @@ def write_split(path: Path, n: int, seed: int):
             labels[i, (i + 3) % load.NUM_CLASSES] = 1
         if i % 11 == 0:
             labels[i, :] = 0  # algunos all-zero
+
+    # Dx sintéticos: primer código puntuado de cada grupo activo (para challenge_score).
+    scored = {c for c, _ in load.SCORED_27_CODES}
+    rep_codes = []
+    for group in load.CLASS_GROUPS_12:
+        hit = next((c for c in group["codes"] if c in scored), group["codes"][0])
+        rep_codes.append(hit)
+    dx_list, matched_list = [], []
+    for i in range(n):
+        active = [j for j in range(load.NUM_CLASSES) if labels[i, j] > 0]
+        dx_list.append(",".join(rep_codes[j] for j in active))
+        matched_list.append(",".join(load.CLASS_NAMES[j] for j in active))
 
     string_dtype = h5py.string_dtype(encoding="utf-8")
     with h5py.File(path, "w") as h5:
@@ -41,15 +64,20 @@ def write_split(path: Path, n: int, seed: int):
         h5.create_dataset("sexes", data=np.asarray(["Unknown"] * n, dtype=object), dtype=string_dtype)
         h5.create_dataset("source_dbs", data=np.asarray(["synthetic"] * n, dtype=object), dtype=string_dtype)
         h5.create_dataset("record_names", data=np.asarray([f"synth_{i:05d}" for i in range(n)], dtype=object), dtype=string_dtype)
+        h5.create_dataset("dx_codes", data=np.asarray(dx_list, dtype=object), dtype=string_dtype)
+        h5.create_dataset("matched_classes", data=np.asarray(matched_list, dtype=object), dtype=string_dtype)
+        h5.create_dataset("window_positions", data=np.zeros(n, dtype=np.int32))
+        h5.create_dataset("window_starts", data=np.zeros(n, dtype=np.int32))
         h5.attrs["dataset"] = "Synthetic smoke-test"
-        h5.attrs["label_schema"] = "cinc2020_12_grouped_snomed"
+        h5.attrs["label_schema"] = load.LABEL_SCHEMA
+        h5.attrs["norm_mode"] = load.DEFAULT_NORM_MODE
         h5.attrs["label_mode"] = "multilabel"
         h5.attrs["sampling_rate"] = load.TARGET_FS
         h5.attrs["window_length"] = load.WINDOW_LENGTH
         h5.attrs["num_leads"] = load.NUM_LEADS
         h5.attrs["num_classes"] = load.NUM_CLASSES
         h5.attrs["lead_order"] = ",".join(load.STANDARD_LEAD_ORDER)
-        h5.attrs["normalization"] = "synthetic standard normal"
+        h5.attrs["normalization"] = "synthetic millivolt-scale with QRS-like bumps, clip ±5 mV"
         h5.attrs.create("classes", np.asarray(load.CLASS_NAMES, dtype=string_dtype))
 
 

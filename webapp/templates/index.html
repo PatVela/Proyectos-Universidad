@@ -167,7 +167,7 @@
         <p data-i18n="detail.emptyBody">Después de analizar un ECG se completará la ficha del registro.</p>
       </div>
       <div id="detContent" hidden>
-        <div class="method" data-i18n="detail.method">Enfoque: la señal se ordena a 12 derivaciones estándar, se remuestrea a 500 Hz, se normaliza por derivación, se ajusta a 5000 muestras y se clasifica con salidas sigmoid independientes.</div>
+        <div class="method" data-i18n="detail.method">Enfoque: la señal se ordena a 12 derivaciones estándar, se convierte a milivoltios con la ganancia del header, se filtra (pasa-banda 0.5–50 Hz), se recorta a ±5 mV, se remuestrea a 500 Hz, se ajusta a 5000 muestras y se clasifica con salidas sigmoid independientes y umbrales por clase.</div>
         <h3 class="sec-title"><span class="sec-tag" data-i18n="detail.recordSheet">Ficha del registro analizado</span></h3>
         <table class="model-table"><tbody id="technicalRows"></tbody></table>
         <h3 class="sec-title"><span class="sec-tag" data-i18n="detail.probabilities">Probabilidades por clase</span></h3>
@@ -184,9 +184,13 @@
           <tr><th data-i18n="tech.checkpoint">Checkpoint</th><td><code>{{ resolved_model }}</code></td></tr>
           <tr><th data-i18n="tech.trained">Entrenado</th><td>{{ model_train_date or '—' }}{% if model_hash %} · id <code>{{ model_hash }}</code>{% endif %}</td></tr>
           <tr><th data-i18n="tech.epoch">Época / val_loss</th><td>{% if model_info and model_info.meta %}{{ model_info.meta.epoch or '—' }} · {{ model_info.meta.val_loss or '—' }}{% else %}—{% endif %}</td></tr>
-          <tr><th data-i18n="tech.params">Parámetros</th><td>{% if model_info and model_info.num_parameters %}{{ '{:,}'.format(model_info.num_parameters.total).replace(',', ' ') }}{% else %}—{% endif %}</td></tr>
+          <tr><th data-i18n="tech.params">Parámetros</th><td>{% if model_info and model_info.num_parameters %}{{ '{:,}'.format(model_info.num_parameters.total).replace(',', ' ') }} ({{ '%.1f' % (model_info.num_parameters.total / 1000000) }} M){% else %}—{% endif %}</td></tr>
           <tr><th data-i18n="tech.loss">Pérdida</th><td><code>BCEWithLogitsLoss</code></td></tr>
           <tr><th data-i18n="tech.activation">Activación</th><td>Sigmoid</td></tr>
+          {% set schema = cfg.get('label_schema') or '' %}
+          <tr><th data-i18n="tech.schema">Esquema de etiquetas</th><td><code>{{ schema or '—' }}</code></td></tr>
+          <tr><th data-i18n="tech.norm">Normalización</th><td>{% if not schema %}—{% elif 'v2' in schema %}<span data-i18n="tech.normPhysical">physical: mV + pasa-banda 0.5–50 Hz + recorte ±5 mV</span>{% else %}<span data-i18n="tech.normLegacy">z-score por derivación (esquema previo)</span>{% endif %}</td></tr>
+          <tr><th data-i18n="tech.thresholds">Umbrales</th><td>{% if thresholds_info and thresholds_info.found %}<span data-i18n="tech.thresholdsCal">calibrados por clase</span> ({{ thresholds_info.num_classes }}){% else %}<span data-i18n="tech.thresholdsGlobal">global 0.5 (respaldo)</span>{% endif %}</td></tr>
           <tr><th>conv_subsample_lengths</th><td><code>{{ cfg.get('conv_subsample_lengths', '[1, 2] × 8') }}</code></td></tr>
           <tr><th>conv_filter_length</th><td><code>{{ cfg.get('conv_filter_length', 7) }}</code></td></tr>
           <tr><th>conv_num_filters_start</th><td><code>{{ cfg.get('conv_num_filters_start', 32) }}</code></td></tr>
@@ -210,7 +214,7 @@
 
       <h3 class="sec-title"><span class="sec-tag" data-i18n="detail.metrics">Métricas de evaluación</span></h3>
       {% if metrics and metrics.found %}
-        <p class="hint muted"><span data-i18n="detail.metricsFrom">Resultados leídos desde</span> <code>{{ metrics.path }}</code>.</p>
+        <p class="hint muted" data-i18n="detail.metricsNote">Métricas calculadas por el script de evaluación sobre validación y test; la tabla por clase muestra el split test.</p>
         <div class="iv-scroll exp-scroll">
           <table class="iv-table exp-table">
             <thead><tr><th>Split</th><th>n</th><th>F1 macro</th><th>F1 micro</th><th>AUROC macro</th><th>AUPRC macro</th><th>Exact match</th></tr></thead>
@@ -231,11 +235,15 @@
             </tbody>
           </table>
         </div>
+        {% if metrics.best_class and metrics.worst_class %}
+        <p class="hint muted"><b data-i18n="detail.bestClass">Mejor clase (F1 test)</b>: <code>{{ metrics.best_class.name }} · {{ '%.3f' % metrics.best_class.value }}</code> &middot; <b data-i18n="detail.worstClass">Peor clase (F1 test)</b>: <code>{{ metrics.worst_class.name }} · {{ '%.3f' % metrics.worst_class.value }}</code></p>
+        {% endif %}
       {% else %}
         <div class="help-box">
           <strong data-i18n="detail.metricsPending">Métricas pendientes.</strong>
           <p data-i18n="detail.metricsCmd">Después de entrenar, ejecute evaluación para llenar esta sección:</p>
-          <p><code>python examples/cinc2020/evaluate.py examples/cinc2020/config.json saved/cinc2020/cinc2020_resnet/&lt;run&gt;/best.pt --output-dir results/cinc2020_12_resnet</code></p>
+          <p><code>python examples/cinc2020/evaluate.py examples/cinc2020/config.json saved/cinc2020/cinc2020_resnet/&lt;run&gt;/best.pt --output-dir &lt;dir-evaluacion&gt;</code></p>
+          <p data-i18n="detail.metricsHint">Ese comando también calibra los umbrales por clase que la app detecta automáticamente.</p>
         </div>
       {% endif %}
     </section>
@@ -250,13 +258,13 @@
 
       <h3 class="sec-title"><span class="sec-tag" data-i18n="exp.compare">ResNet-34 vs CNN convencional</span></h3>
       {% if experiments and experiments.comparison_found %}
-      <p class="hint muted">Archivo: <code>{{ experiments.comparison_path }}</code></p>
+      <p class="hint muted" data-i18n="exp.compareNote">Comparación justa: mismo dataset, split, preprocesamiento y métricas para ambas arquitecturas. La estrella marca el mejor F1 macro en test.</p>
       <div class="iv-scroll exp-scroll">
         <table class="iv-table exp-table">
           <thead><tr><th data-i18n="table.model">Modelo</th><th>Split</th><th>n</th><th>F1 macro</th><th>F1 micro</th><th>Sens. macro</th><th>Esp. macro</th><th>AUROC macro</th></tr></thead>
           <tbody>
           {% for row in experiments.comparison %}
-            <tr><td><strong>{{ row.model }}</strong></td><td>{{ row.split }}</td><td>{{ row.samples }}</td><td>{{ '%.3f' % row.f1_macro }}</td><td>{{ '%.3f' % row.f1_micro }}</td><td>{{ '%.3f' % row.sensitivity_macro }}</td><td>{{ '%.3f' % row.specificity_macro if row.specificity_macro is not none else '—' }}</td><td>{{ '%.3f' % row.auroc_macro if row.auroc_macro is not none else '—' }}</td></tr>
+            <tr><td><strong>{{ row.model }}</strong>{% if experiments.comparison_winner and row.model == experiments.comparison_winner and (row.split | lower) == 'test' %}<span class="badge ok">★</span>{% endif %}</td><td>{{ row.split }}</td><td>{{ row.samples }}</td><td>{{ '%.3f' % row.f1_macro }}</td><td>{{ '%.3f' % row.f1_micro }}</td><td>{{ '%.3f' % row.sensitivity_macro }}</td><td>{{ '%.3f' % row.specificity_macro if row.specificity_macro is not none else '—' }}</td><td>{{ '%.3f' % row.auroc_macro if row.auroc_macro is not none else '—' }}</td></tr>
           {% endfor %}
           </tbody>
         </table>
@@ -265,28 +273,31 @@
       <div class="help-box">
         <strong data-i18n="exp.pending">Resultado pendiente.</strong>
         <p data-i18n="exp.compareCmd">Genere primero métricas para ambos modelos y luego compare:</p>
-        <p><code>python examples/cinc2020/compare_models.py --resnet results/cinc2020_12_resnet --cnn results/cinc2020_12_cnn --output results/cinc2020_12/model_comparison.csv</code></p>
+        <p><code>python examples/cinc2020/compare_models.py --resnet &lt;dir-eval-resnet&gt; --cnn &lt;dir-eval-cnn&gt; --output &lt;comparacion.csv&gt;</code></p>
       </div>
       {% endif %}
 
       <h3 class="sec-title"><span class="sec-tag" data-i18n="exp.robust">Robustez frente a perturbaciones ECG</span></h3>
       {% if experiments and experiments.robustness_found %}
-      <p class="hint muted">Archivo: <code>{{ experiments.robustness_path }}</code></p>
+      <p class="hint muted" data-i18n="exp.robustNote">Cada fila aplica una degradación controlada al test y mide cuánto cae el F1 macro frente a la señal limpia.</p>
       <div class="iv-scroll exp-scroll">
         <table class="iv-table exp-table">
-          <thead><tr><th data-i18n="exp.perturbation">Perturbación</th><th data-i18n="exp.level">Nivel</th><th>n</th><th>F1 macro</th><th>F1 micro</th><th data-i18n="metric.precisionMacro">Precisión macro</th><th data-i18n="metric.sensitivityMacro">Sensibilidad macro</th></tr></thead>
+          <thead><tr><th data-i18n="exp.perturbation">Perturbación</th><th data-i18n="exp.level">Nivel</th><th>n</th><th>F1 macro</th><th>F1 micro</th><th data-i18n="metric.precisionMacro">Precisión macro</th><th data-i18n="metric.sensitivityMacro">Sensibilidad macro</th><th data-i18n="exp.deltaCol">ΔF1 vs limpio</th></tr></thead>
           <tbody>
           {% for row in experiments.robustness %}
-            <tr><td><code>{{ row.perturbation }}</code></td><td>{{ row.level }}</td><td>{{ row.samples }}</td><td><strong>{{ '%.3f' % row.f1_macro }}</strong></td><td>{{ '%.3f' % row.f1_micro }}</td><td>{{ '%.3f' % row.precision_macro }}</td><td>{{ '%.3f' % row.sensitivity_macro }}</td></tr>
+            <tr><td><code>{{ row.perturbation }}</code></td><td>{{ row.level }}</td><td>{{ row.samples }}</td><td><strong>{{ '%.3f' % row.f1_macro }}</strong></td><td>{{ '%.3f' % row.f1_micro }}</td><td>{{ '%.3f' % row.precision_macro }}</td><td>{{ '%.3f' % row.sensitivity_macro }}</td><td>{% if row.delta_f1_macro is not none %}<span class="badge {{ 'ok' if row.delta_f1_macro >= -0.001 else 'no' }}">{{ '%+.3f' % row.delta_f1_macro }}</span>{% else %}—{% endif %}</td></tr>
           {% endfor %}
           </tbody>
         </table>
       </div>
+      {% if experiments.biggest_drop %}
+      <p class="hint muted"><b data-i18n="exp.biggestDrop">Mayor caída vs señal limpia</b>: <code>{{ experiments.biggest_drop.name }} · {{ experiments.biggest_drop.level }} · {{ '%+.3f' % experiments.biggest_drop.delta }}</code></p>
+      {% endif %}
       {% else %}
       <div class="help-box">
         <strong data-i18n="exp.pending">Resultado pendiente.</strong>
         <p data-i18n="exp.robustCmd">Ejecute el experimento reproducible de robustez:</p>
-        <p><code>python examples/cinc2020/robustness.py saved/cinc2020/cinc2020_resnet/&lt;run&gt;/best.pt data/cinc2020_12/test.h5 --thresholds results/cinc2020_12_resnet/thresholds_validation.csv --output results/cinc2020_12/robustness.csv</code></p>
+        <p><code>python examples/cinc2020/robustness.py saved/cinc2020/cinc2020_resnet/&lt;run&gt;/best.pt data/cinc2020_12/test.h5 --thresholds &lt;umbrales-por-clase.csv&gt; --output &lt;robustez.csv&gt;</code></p>
       </div>
       {% endif %}
     </section>

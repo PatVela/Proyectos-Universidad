@@ -1,6 +1,6 @@
 {
   "dataset": "PhysioNet/CinC Challenge 2020",
-  "label_schema": "cinc2020_12_grouped_snomed",
+  "label_schema": "cinc2020_12_grouped_snomed_v2",
   "problem_type": "multilabel",
   "train": "data/cinc2020_12/train.h5",
   "dev": "data/cinc2020_12/val.h5",
@@ -15,7 +15,7 @@
   "conv_num_skip": 2,
   "conv_dropout": 0.2,
   "is_regular_conv": false,
-  "batch_size": 8,
+  "batch_size": 64,
   "learning_rate": 0.001,
   "min_lr": 0.00005,
   "weight_decay": 0.0001,
@@ -23,7 +23,7 @@
   "early_stopping_patience": 10,
   "reduce_lr_patience": 3,
   "reduce_lr_factor": 0.5,
-  "num_workers": 2,
+  "num_workers": 0,
   "pin_memory": true,
   "amp": true,
   "seed": 42
