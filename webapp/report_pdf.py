@@ -134,8 +134,10 @@ def _build_reportlab_pdf(prediction: dict, output_path: Path) -> str:
     from reportlab.pdfgen.canvas import Canvas as _Canvas
     from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-    NAVY = colors.HexColor("#1e3a8a")
-    NAVY_DARK = colors.HexColor("#172e6e")
+    # Paleta institucional UNSA: granate + oro (verdes/rojos semánticos intactos)
+    NAVY = colors.HexColor("#84030c")
+    NAVY_DARK = colors.HexColor("#5e0208")
+    GOLD = colors.HexColor("#cea962")
     RED = colors.HexColor("#b91c1c")
     GREEN = colors.HexColor("#15803d")
     GREEN_BG = colors.HexColor("#dcfce7")
@@ -182,7 +184,7 @@ def _build_reportlab_pdf(prediction: dict, output_path: Path) -> str:
     story.append(Paragraph(_esc(TITLE), s_title))
     story.append(Paragraph(_esc(SUBTITLE), s_sub))
     story.append(Table([[""]], colWidths=[content_w],
-                       style=TableStyle([("LINEBELOW", (0, 0), (-1, 0), 1.5, RED)])))
+                       style=TableStyle([("LINEBELOW", (0, 0), (-1, 0), 1.5, GOLD)])))
     story.append(Spacer(1, 4))
     head_rows = [
         [Paragraph(f"<b>Folio:</b> {_esc(folio)}", s_cell),
@@ -226,14 +228,14 @@ def _build_reportlab_pdf(prediction: dict, output_path: Path) -> str:
     # ---- 3. Probabilidades ----
     story.append(Paragraph("3. Probabilidades por clase", s_h1))
     story.append(Paragraph(
-        "Barras ordenadas de mayor a menor probabilidad. La marca negra indica el umbral de decisión "
+        "Barras ordenadas de mayor a menor probabilidad. La marca vertical indica el umbral de decisión "
         "de cada clase; la barra se resalta cuando la probabilidad lo supera.", s_small))
     story.append(Spacer(1, 4))
     story.append(_probability_chart(predictions, content_w, BAR_BG, BAR_NEG, BAR_POS, BAR_NSR, SLATE))
     story.append(Spacer(1, 6))
-    det_rows = [[Paragraph("<b>Clase</b>", s_cell), Paragraph("<b>Prob.</b>", s_cell),
-                 Paragraph("<b>Umbral</b>", s_cell), Paragraph("<b>Margen</b>", s_cell),
-                 Paragraph("<b>Decisión</b>", s_cell), Paragraph("<b>Obs.</b>", s_cell)]]
+    det_rows = [[Paragraph("<b><font color=\"white\">Clase</font></b>", s_cell), Paragraph("<b><font color=\"white\">Prob.</font></b>", s_cell),
+                 Paragraph("<b><font color=\"white\">Umbral</font></b>", s_cell), Paragraph("<b><font color=\"white\">Margen</font></b>", s_cell),
+                 Paragraph("<b><font color=\"white\">Decisión</font></b>", s_cell), Paragraph("<b><font color=\"white\">Obs.</font></b>", s_cell)]]
     for item in predictions:
         prob = float(item.get("probability", 0.0) or 0.0)
         thr = float(item.get("threshold", prediction.get("threshold", 0.5)) or 0.0)
@@ -332,8 +334,8 @@ def _build_reportlab_pdf(prediction: dict, output_path: Path) -> str:
 
     # ---- Anexo ----
     story.append(Paragraph("Anexo A. Correspondencia de códigos SNOMED-CT", s_h1))
-    anx_rows = [[Paragraph("<b>Clase</b>", s_cell), Paragraph("<b>Descripción</b>", s_cell),
-                 Paragraph("<b>Códigos SNOMED-CT</b>", s_cell)]]
+    anx_rows = [[Paragraph("<b><font color=\"white\">Clase</font></b>", s_cell), Paragraph("<b><font color=\"white\">Descripción</font></b>", s_cell),
+                 Paragraph("<b><font color=\"white\">Códigos SNOMED-CT</font></b>", s_cell)]]
     for item in predictions:
         codes = ", ".join(item.get("snomed_codes", []) or [])
         anx_rows.append([
@@ -379,7 +381,7 @@ def _kv_table(rows, content_w, navy, grid, cell_style):
     from reportlab.lib.units import mm
     from reportlab.platypus import Paragraph, Table, TableStyle
     body = [[
-        Paragraph(f"<b>{html.escape(str(k), quote=False)}</b>", cell_style),
+        Paragraph(f"<b><font color=\"white\">{html.escape(str(k), quote=False)}</font></b>", cell_style),
         Paragraph(_esc(v), cell_style),
     ] for k, v in rows]
     table = Table(body, colWidths=[42 * mm, content_w - 42 * mm], hAlign="LEFT")
@@ -504,7 +506,10 @@ def _canvas_factory(folio, emission, record, inst1, inst2):
     from reportlab.lib.pagesizes import A4
     from reportlab.pdfgen.canvas import Canvas
 
-    navy = colors.HexColor("#1e3a8a")
+    navy = colors.HexColor("#84030c")
+    gold = colors.HexColor("#cea962")
+    escudo_path = Path(__file__).resolve().parent / "static" / "escudo-unsa.png"
+    escudo_ok = escudo_path.exists()
 
     class DecoratedCanvas(Canvas):
         def __init__(self, *args, **kwargs):
@@ -527,13 +532,28 @@ def _canvas_factory(folio, emission, record, inst1, inst2):
             self.saveState()
             page_w, page_h = A4
             # Banda superior institucional
+            mm = 2.83465
             self.setFillColor(navy)
-            self.rect(0, page_h - 20 * 2.83465, page_w, 20 * 2.83465, stroke=0, fill=1)
+            self.rect(0, page_h - 20 * mm, page_w, 20 * mm, stroke=0, fill=1)
+            self.setFillColor(gold)
+            self.rect(0, page_h - 20 * mm, page_w, 1 * mm, stroke=0, fill=1)
+            text_x = 15 * mm
+            if escudo_ok:
+                try:
+                    ew, eh = 12.1 * mm, 15 * mm
+                    ex, ey = 15 * mm, page_h - 17.5 * mm
+                    self.setFillColor(colors.white)
+                    self.roundRect(ex - 1.2 * mm, ey - 1.2 * mm, ew + 2.4 * mm, eh + 2.4 * mm,
+                                   2 * mm, stroke=0, fill=1)
+                    self.drawImage(str(escudo_path), ex, ey, ew, eh, mask="auto")
+                    text_x = 32 * mm
+                except Exception:
+                    text_x = 15 * mm
             self.setFillColor(colors.white)
             self.setFont("Helvetica-Bold", 8)
-            self.drawString(15 * 2.83465, page_h - 11 * 2.83465, (inst1 or "ECG CINC2020-12")[:90])
+            self.drawString(text_x, page_h - 11 * mm, (inst1 or "ECG CINC2020-12")[:90])
             self.setFont("Helvetica", 7)
-            self.drawString(15 * 2.83465, page_h - 15.5 * 2.83465, (inst2 or "")[:110])
+            self.drawString(text_x, page_h - 15.5 * mm, (inst2 or "")[:110])
             right = f"Folio {folio}  ·  {emission}"
             self.setFont("Helvetica", 7)
             self.drawRightString(page_w - 15 * 2.83465, page_h - 11 * 2.83465, right[:90])
