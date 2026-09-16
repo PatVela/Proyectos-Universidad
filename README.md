@@ -235,7 +235,7 @@ python examples/cinc2020/evaluate.py examples/cinc2020/config.json $resnet --out
 python examples/cinc2020/evaluate.py examples/cinc2020/config_resnet_v2.json $resnet2 --output-dir eval-resnet-v2 --temperatures eval-resnet-v2/temperatures_validation.csv --threshold-beta 0.5
 ```
 
-Sin `--nsr-exclusive-min-prob`: esa regla resultó perjudicial en ablación (−11 pts de F1-macro sin ganancia de precisión) y no se usa. Cada directorio contendrá umbrales por clase, métricas por clase y globales, predicciones de validación/test, matrices de confusión 2×2, curvas ROC/PR y un resumen JSON.
+Sin `--nsr-exclusive-min-prob`: esa regla resultó perjudicial en ablación (−11 pts de F1-macro sin ganancia de precisión) y no se usa. Cada directorio contendrá umbrales por clase, métricas por clase y globales, predicciones de validación/test, matrices de confusión 2×2, curvas ROC/PR y un resumen JSON (`evaluation_summary.json`).
 
 ### Paso 6 — Comparar v1 vs v2 y elegir el mejor
 
@@ -243,7 +243,7 @@ Sin `--nsr-exclusive-min-prob`: esa regla resultó perjudicial en ablación (−
 python examples/cinc2020/compare_models.py --eval-a eval-resnet --eval-b eval-resnet-v2 --label-a "ResNet v1" --label-b "ResNet v2" --output exp-files/model_comparison.csv
 ```
 
-Abra `exp-files/model_comparison.csv` en VS Code, mire F1-macro en test y defina el ganador (ajuste según lo que vea; aquí se asume v2):
+Abra `exp-files/model_comparison.csv` en su visor de CSV, mire F1-macro en test y defina el ganador (ajuste según lo que vea; aquí se asume v2):
 
 ```powershell
 $mejor = $resnet2
@@ -344,6 +344,8 @@ Notas:
 ├── examples/cinc2020/      # pipeline: datos, evaluación y experimentos
 │   ├── build_datasets.py / evaluate.py / compare_models.py
 │   ├── robustness.py / challenge_score.py
+│   ├── calibrate.py / ensemble_evaluate.py
+│   ├── error_analysis.py / export_onnx.py
 │   ├── diagnose_prediction.py / debug_record_prediction.py
 │   ├── config*.json        # configs ResNet, ResNet v2 y sintético
 │   └── official/           # scripts y tablas oficiales del Challenge 2020
@@ -384,7 +386,7 @@ Detalles, formatos y endpoints en [webapp/README.md](webapp/README.md).
 * **Métrica oficial estilo Challenge 2020** sobre los 27 códigos puntuados (`challenge_score.py`).
 * **Diagnóstico por registro**: inspección de casos individuales (`diagnose_prediction.py`, `debug_record_prediction.py`).
 
-Los resultados se visualizan automáticamente en la webapp. Comandos en [examples/cinc2020/README.md](examples/cinc2020/README.md) y diseño experimental en [docs/experimentos_cinc2020.md](docs/experimentos_cinc2020.md).
+Los resultados se visualizan automáticamente en la webapp. Comandos en [examples/cinc2020/README.md](examples/cinc2020/README.md) y diseño experimental en [docs/experimentos_cinc2020.md](docs/experimentos_cinc2020.md). Resultados finales en [docs/resultados_finales.md](docs/resultados_finales.md) y diagnóstico del fix v1→v2 en [docs/fix_prediccion_cinc2020.md](docs/fix_prediccion_cinc2020.md).
 
 <p align="right">(<a href="#readme-top">volver arriba</a>)</p>
 

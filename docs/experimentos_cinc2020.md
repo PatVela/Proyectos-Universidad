@@ -20,6 +20,8 @@ bash descargar_datos_2020.sh
 python examples/cinc2020/build_datasets.py --data_dir dataset2020 --output_dir data/cinc2020_12 --workers 8 --norm_mode physical --train_windows_max 4
 ```
 
+En Windows, la primera línea corre en una terminal Git Bash.
+
 ## Experimento A — ResNet-34 tipo Hannun
 
 ```powershell
@@ -44,7 +46,7 @@ Ambos modelos deben usar:
 - mismo split train/validation/test;
 - mismo preprocesamiento;
 - mismo número de clases;
-- mismo batch size, optimizador y criterio de pérdida;
+- mismo batch size y optimizador; misma familia de pérdida (BCE, v2 añade label smoothing 0.05);
 - mismas métricas de evaluación.
 
 ```powershell

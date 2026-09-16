@@ -60,6 +60,10 @@ Esta carpeta contiene el pipeline experimental completo del proyecto: desde la d
 | `challenge_score.py` | Métrica oficial estilo Challenge 2020 (27 códigos) |
 | `diagnose_prediction.py` | Diagnóstico detallado de un registro |
 | `debug_record_prediction.py` | Compara señal webapp vs señal HDF5 por registro |
+| `calibrate.py` | Temperature scaling por clase + reporte ECE/Brier |
+| `ensemble_evaluate.py` | Ensemble promedio de dos checkpoints |
+| `error_analysis.py` | Errores por subconjunto de origen (hospital/fuente) |
+| `export_onnx.py` | Exportación a ONNX con verificación numérica |
 | `make_syntethic.py` | Dataset sintético para smoke tests |
 | `config*.json` | Configs de ResNet, ResNet v2 y sintético |
 | `official/` | Scripts y tablas oficiales del Challenge 2020 |
@@ -195,7 +199,7 @@ Ensemble promedio de dos checkpoints (mismo layout de salida que `evaluate.py`):
 python examples/cinc2020/ensemble_evaluate.py examples/cinc2020/config.json $resnet $resnet2 --output-dir ensemble --alpha 0.5 --threshold-beta 0.5 --temperatures-a eval-resnet/temperatures_validation.csv --temperatures-b eval-resnet-v2/temperatures_validation.csv
 ```
 
-Para re-entrenar la ResNet con receta anti-sobreajuste (más épocas, más regularización), usar `examples/cinc2020/config_resnet_v2.json` con `ecg.train`. Ese config selecciona el mejor checkpoint por F1-macro en validación (`early_stopping_metric: val_f1_macro`) en vez de por `val_loss`, porque ambas métricas pueden discrepar; `history.csv` registra ambas curvas en todos los runs. Además activa aumentación de señal (`augment: true`: ruido, deriva basal, escala, desplazamiento temporal, dropout de derivación) y label smoothing (`label_smoothing: 0.05`) para frenar el sobreajuste.
+Para re-entrenar la ResNet con receta anti-sobreajuste (más épocas, más regularización), usar `examples/cinc2020/config_resnet_v2.json` con `ecg.train`. Ese config selecciona el mejor checkpoint por F1-macro en validación (`early_stopping_metric: val_f1_macro`) en vez de por `val_loss`, porque ambas métricas pueden discrepar; `history.csv` registra ambas curvas en todos los runs. Además activa aumentación de señal (`augment: true`: ruido, deriva basal, escala, desplazamiento temporal, dropout de derivación) y label smoothing (`label_smoothing: 0.05`) para frenar el sobreajuste. Resultados finales (v1 vs v2 vs ensemble) en [docs/resultados_finales.md](../../docs/resultados_finales.md).
 
 <p align="right">(<a href="#readme-top">volver arriba</a>)</p>
 

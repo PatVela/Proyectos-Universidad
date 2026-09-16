@@ -68,14 +68,14 @@ Aplicación Flask tipo dashboard: se sube un ECG, se analiza con el mejor checkp
 * Predicción multilabel con probabilidades, márgenes y umbrales por clase.
 * Detección automática de los umbrales calibrados por la evaluación; respaldo global 0.5 si no existen.
 * Trazado ECG con cuadrícula tipo papel milimetrado.
-* Informe PDF profesional con veredicto, gráfico de barras y trazado.
+* Informe PDF profesional con membrete UNSA: veredicto, gráfico de barras y trazado.
 * Comparación con etiquetas reales: automática desde `Dx` (WFDB) o manual para CSV (clases o SNOMED).
 * Ficha técnica del registro y del modelo, esquema SNOMED-CT y métricas exportadas.
 * Secciones de comparación arquitectónica y robustez alimentadas por los experimentos.
 * Gráficas interactivas de métricas y curvas ROC/PR por clase (Plotly).
 * Historial de análisis de la sesión con re-descarga de artefactos.
 * Temperature scaling automático si existe calibración previa.
-* Interfaz bilingüe ES/EN y tema claro/oscuro persistentes.
+* Interfaz bilingüe ES/EN con identidad UNSA (escudo, granate/dorado) y tema claro/oscuro persistentes.
 
 <p align="right">(<a href="#readme-top">volver arriba</a>)</p>
 
@@ -88,7 +88,7 @@ Aplicación Flask tipo dashboard: se sube un ECG, se analiza con el mejor checkp
 
 ### Ejecución
 
-Desde la raíz del proyecto, sin variables de entorno. Defina los checkpoints una vez por terminal:
+Desde la raíz del proyecto; todo se configura con banderas. Defina los checkpoints una vez por terminal:
 
 ```powershell
 $resnet = Get-ChildItem saved/cinc2020/cinc2020_resnet/*/best.pt | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
@@ -175,6 +175,7 @@ La app valida que el stem coincida, lee el header, preprocesa la señal, compara
 | `POST` | `/predict` | Analiza archivos + umbral; devuelve JSON con probabilidades, trazado y PDF |
 | `GET` | `/results/<archivo>` | Descarga artefactos generados (PDF, PNG, CSV convertido) |
 | `GET` | `/models` | Checkpoints disponibles en la carpeta configurada |
+| `POST` | `/use_model` | Cambia el checkpoint activo (vacío = selección automática) |
 | `GET` | `/metrics` | Métricas de evaluación en JSON (si existen) |
 | `GET` | `/experiments` | Comparación y robustez en JSON (si existen) |
 | `GET` | `/curves?split=test` | Curvas ROC/PR por clase en JSON (si existen) |
@@ -196,7 +197,7 @@ webapp/
 ├── project_info.py   # datos institucionales y referencia bibliográfica
 ├── wsgi.py           # entrada WSGI para despliegue
 ├── templates/index.html
-└── static/app.js     # dashboard + i18n ES/EN
+└── static/           # app.js (dashboard + i18n ES/EN), style.css (temas + UNSA)
 ```
 
 <p align="right">(<a href="#readme-top">volver arriba</a>)</p>

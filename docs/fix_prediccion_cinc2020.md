@@ -68,7 +68,7 @@ del centro se pierden, pero la etiqueta del registro completo se mantiene
 | 5 | Robustez: `best.pt` reales primero (sintéticos al final), validación de nombres de clase, chequeo esquema HDF5↔checkpoint, thresholds legacy | `ecg/util.py`, `ecg/predict.py`, `ecg/train.py`, `webapp/app.py` | No |
 | 6 | **Métrica oficial** estilo Challenge (27 códigos + `weights.csv`) | `examples/cinc2020/challenge_score.py`, `official/` | No |
 | 7 | **Diagnóstico integral** unificado | `examples/cinc2020/diagnose_prediction.py` | No |
-| 8 | `torch` agregado a `requirements.txt` (faltaba) | `requirements.txt` | No |
+| 8 | `torch` fuera de `requirements.txt`: se instala aparte con CUDA vía `requirements-cuda.txt` (ver README, Paso 0) | `requirements.txt`, `requirements-cuda.txt` | No |
 
 ## 3. Migración (pasos para reentrenar en v2)
 
@@ -85,7 +85,8 @@ python examples/cinc2020/build_datasets.py --data_dir dataset2020 --output_dir d
 # 2) Reentrenar (ResNet)
 python -m ecg.train examples/cinc2020/config.json -e cinc2020_resnet
 
-# 3) Evaluar (thresholds en val, métricas en test)
+# 3) Calibrar + evaluar (thresholds en val, métricas en test)
+python examples/cinc2020/calibrate.py --checkpoint $resnet --val-h5 data/cinc2020_12/val.h5 --output-dir eval-resnet
 python examples/cinc2020/evaluate.py examples/cinc2020/config.json $resnet --output-dir eval-resnet --temperatures eval-resnet/temperatures_validation.csv --threshold-beta 0.5
 
 # 4) Métrica oficial estilo Challenge (27 códigos)

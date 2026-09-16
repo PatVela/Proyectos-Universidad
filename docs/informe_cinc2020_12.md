@@ -59,7 +59,6 @@ Implementación: `ecg/network.py`.
 
 - `ECGResNet34`: ResNet 1D tipo Hannun, 16 bloques residuales, salida de 12 logits.
 
-
 ## Entrenamiento
 
 Implementación: `ecg/train.py`.
