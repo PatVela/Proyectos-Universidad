@@ -11,16 +11,20 @@
 
 ## Tabla principal (test, n = 6421)
 
-| Métrica | ResNet v1 | ResNet v2 | Ensemble |
-|---|---|---|---|
-| F1-macro | 0.683 | **0.718** | 0.710 |
-| F1-micro | 0.731 | 0.745 | **0.747** |
-| Precisión-macro | 0.818 | 0.789 | **0.824** |
-| Recall-macro | 0.593 | **0.673** | 0.629 |
-| Especificidad-macro | 0.976 | 0.974 | **0.977** |
-| AUROC-macro | 0.943 | 0.938 | **0.951** |
-| AUPRC-macro | 0.784 | 0.779 | **0.805** |
-| Exact-match | 0.437 | **0.459** | 0.455 |
+| Métrica | ResNet v1 | ResNet v2 | Ensemble F0.5 | Ensemble F1 |
+|---|---|---|---|---|
+| F1-macro | 0.683 | 0.718 | 0.710 | **0.756** |
+| F1-micro | 0.731 | 0.745 | 0.747 | **0.783** |
+| Precisión-macro | 0.818 | 0.789 | **0.824** | 0.733 |
+| Recall-macro | 0.593 | 0.673 | 0.629 | **0.783** |
+| Especificidad-macro | 0.976 | 0.974 | **0.977** | 0.945 |
+| AUROC-macro | 0.943 | 0.938 | **0.951** | **0.951** |
+| AUPRC-macro | 0.784 | 0.779 | **0.805** | **0.805** |
+| Exact-match | 0.437 | 0.459 | 0.455 | **0.472** |
+
+Ensemble F1 = mismo promedio v1+v2 y mismas temperaturas, con umbrales optimizados con
+beta=1.0 (`ensemble-f1/`). En validación (n=6486): F1-macro 0.768, F1-micro 0.792,
+AUROC 0.953, AUPRC 0.814, exact-match 0.499.
 
 ## F1 por clase (test)
 
@@ -62,16 +66,23 @@
    INCART 0.160 (n=10, no concluyente).
 7. **Métrica Challenge 27 códigos: 0.2348** (F1-macro-27 0.302). Referencia interna solamente:
    no comparable al leaderboard (esquema agrupado de 12 + punto conservador).
+8. **Punto de operación F1 para screening.** Con beta=1.0, el ensemble sube a F1-macro 0.756
+   (+4.5 sobre F0.5) y recall 0.783 (+15.4), con todas las clases mejorando en F1
+   (SB 0.658→0.777, TAb 0.654→0.693); costo: precisión 0.824→0.733. Motivado por el caso
+   Q1033 (TAb 0.687 bajo el umbral F0.5 de 0.69, por dilución v1/v2: 0.80 vs 0.57).
 
 ## Modelo final recomendado
 
-**Ensemble v1+v2** (promedio simple, temperaturas por modelo, umbrales F0.5): mejor precisión
-(0.824), discriminación (AUROC 0.951) y F0.5 global, con F1-macro 0.710 (≈ v2).
-ResNet v2 sola queda como mejor modelo individual en F1-macro (0.718). La webapp demuestra
-el ensemble (`--model` + `--model-b` + `--temperatures`/`--temperatures-b` + `--eval-dir ensemble`).
+**Ensemble v1+v2** (promedio simple, temperaturas por modelo). Dos puntos de operación:
+**F0.5** (precisión 0.824, titular de precisión/discriminación) y **F1** (F1-macro 0.756,
+recall 0.783, recomendado para screening y para la demo webapp, donde un FN cuesta más
+que un FP). ResNet v2 sola queda como mejor modelo individual en F1-macro con F0.5 (0.718).
+La webapp demuestra el ensemble (`--model` + `--model-b` + `--temperatures`/`--temperatures-b` +
+`--eval-dir ensemble` o `--eval-dir ensemble-f1`).
 
 ## Artefactos
 
 - `eval-resnet/`, `eval-resnet-v2-noexcl/`, `ensemble-noexcl/`: métricas, umbrales, predicciones, curvas.
+- `ensemble-f1/`: mismo ensemble con umbrales F1 (punto de screening).
 - `exp-files/model_comparison.csv`: v1 vs v2. `comparacion_ensemble.csv`: v2 vs ensemble.
 - `exp-files/robustness.csv`, `metrica-challenge/`, `errores_origen.csv`.

@@ -163,6 +163,18 @@ const I18N = {
     "bars.f1": "F1",
     "bars.auroc": "AUROC",
     "bars.title": "F1 y AUROC por clase (test)",
+    "detail.groupRecord": "Registro y adquisición",
+    "detail.groupDecision": "Decisión del modelo",
+    "detail.groupPreproc": "Preprocesamiento y esquema",
+    "detail.schemaNote": "Referencia completa de códigos por clase (la tabla de probabilidades los omite por legibilidad).",
+    "detail.varsNote": "Con las variables $resnet, $resnet2, $mejor y $evalMejor definidas en el README principal.",
+    "tech.modelB": "Modelo B (ensemble)",
+    "tech.objective": "objetivo",
+    "tech.advanced": "Hiperparámetros de entrenamiento (avanzado)",
+    "prob.marginNote": "Margen = probabilidad − umbral. El marcador ~ indica cercanía al umbral (|margen| < 0.05): baja confianza. Pase el cursor sobre la clase para ver sus códigos SNOMED.",
+    "bars.noData": "No se pudieron cargar los datos del gráfico interactivo.",
+    "exp.verdictLead": "Ganador en F1-macro (test)",
+    "exp.levelNote": "Niveles: ruido σ en mV, deriva amplitud en mV (seno 0.5 Hz), escalado factor ×, apagado número de derivaciones.",
     "history.title": "Historial de sesión",
     "history.empty": "Aún no hay análisis en esta sesión.",
     "history.clear": "Limpiar historial",
@@ -332,6 +344,18 @@ const I18N = {
     "bars.f1": "F1",
     "bars.auroc": "AUROC",
     "bars.title": "F1 and AUROC per class (test)",
+    "detail.groupRecord": "Record and acquisition",
+    "detail.groupDecision": "Model decision",
+    "detail.groupPreproc": "Preprocessing and schema",
+    "detail.schemaNote": "Full per-class code reference (the probabilities table omits them for readability).",
+    "detail.varsNote": "Using the $resnet, $resnet2, $mejor and $evalMejor variables defined in the main README.",
+    "tech.modelB": "Model B (ensemble)",
+    "tech.objective": "objective",
+    "tech.advanced": "Training hyperparameters (advanced)",
+    "prob.marginNote": "Margin = probability − threshold. The ~ marker means near-threshold (|margin| < 0.05): low confidence. Hover the class to see its SNOMED codes.",
+    "bars.noData": "Could not load the interactive chart data.",
+    "exp.verdictLead": "Winner on test F1-macro",
+    "exp.levelNote": "Levels: noise σ in mV, wander amplitude in mV (0.5 Hz sine), scaling factor ×, dropout lead count.",
     "history.title": "Session history",
     "history.empty": "No analyses yet in this session.",
     "history.clear": "Clear history",
@@ -765,22 +789,31 @@ function row(label, value) {
   return `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value ?? "—")}</td></tr>`;
 }
 
+function rowHtml(label, html) {
+  return `<tr><th>${escapeHtml(label)}</th><td>${html}</td></tr>`;
+}
+
+function detSub(title) {
+  return `<tr class="det-sub"><td colspan="2">${escapeHtml(title)}</td></tr>`;
+}
+
+function fmtNum(value, digits = 3) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toFixed(digits) : "—";
+}
+
 function renderTechnical(result) {
   const details = result.technical_details || {};
   const cmp = result.label_comparison || {};
+  const exactBadge = !cmp.available ? "—"
+    : cmp.exact_match ? `<span class="badge ok">${LANG === "es" ? "Sí" : "Yes"}</span>` : `<span class="badge no">No</span>`;
   technicalRows.innerHTML = [
+    detSub(tr("detail.groupRecord")),
     row(LANG === "es" ? "Registro" : "Record", result.record_name),
     row(LANG === "es" ? "Paciente / ID" : "Patient / ID", result.patient_name || "—"),
     row(LANG === "es" ? "Edad" : "Age", result.patient_age || "—"),
     row(LANG === "es" ? "Tipo de entrada" : "Input type", result.input_type),
     row(LANG === "es" ? "Archivos fuente" : "Source files", (result.source_files || []).map(shortPath).join(" | ")),
-    row(LANG === "es" ? "Modelo" : "Model", result.model_type),
-    row("Checkpoint", shortPath(result.model_path)),
-    row(LANG === "es" ? "Época checkpoint" : "Checkpoint epoch", result.checkpoint_epoch),
-    row("Val loss", result.checkpoint_val_loss),
-    row("Threshold", result.using_class_thresholds ? (LANG === "es" ? "calibrado por clase" : "class-calibrated") : result.threshold),
-    row(LANG === "es" ? "Fuente de umbrales" : "Threshold source", baseName(result.threshold_source)),
-    row(LANG === "es" ? "Calibración" : "Calibration", result.calibrated ? `${LANG === "es" ? "temperature scaling por clase" : "per-class temperature scaling"} (${baseName(result.temperature_source)})` : (LANG === "es" ? "sin calibrar" : "uncalibrated")),
     row(LANG === "es" ? "Shape procesado" : "Processed shape", Array.isArray(result.processed_shape) ? result.processed_shape.join(" × ") : result.processed_shape),
     row(LANG === "es" ? "Frecuencia original" : "Original sampling rate", result.original_sampling_rate ? `${result.original_sampling_rate} Hz` : "—"),
     row(LANG === "es" ? "Frecuencia objetivo" : "Target sampling rate", result.target_sampling_rate ? `${result.target_sampling_rate} Hz` : "—"),
@@ -788,10 +821,19 @@ function renderTechnical(result) {
     row(LANG === "es" ? "Ventanas analizadas" : "Analyzed windows", result.num_windows ? `${result.num_windows} × ${result.window_seconds} s · ${result.window_aggregation || "max"}` : "—"),
     row(LANG === "es" ? "Derivaciones" : "Leads", Array.isArray(result.lead_names) ? result.lead_names.join(", ") : result.lead_names),
     row("DX", result.dx_codes && result.dx_codes.length ? result.dx_codes.join(", ") : "—"),
+    detSub(tr("detail.groupDecision")),
+    row(LANG === "es" ? "Modelo" : "Model", result.model_type),
+    row("Checkpoint", shortPath(result.model_path)),
+    row(LANG === "es" ? "Época checkpoint" : "Checkpoint epoch", result.checkpoint_epoch),
+    row("Val loss", fmtNum(result.checkpoint_val_loss)),
+    row("Threshold", result.using_class_thresholds ? (LANG === "es" ? "calibrado por clase" : "class-calibrated") : result.threshold),
+    row(LANG === "es" ? "Fuente de umbrales" : "Threshold source", baseName(result.threshold_source)),
+    row(LANG === "es" ? "Calibración" : "Calibration", result.calibrated ? `${LANG === "es" ? "temperature scaling por clase" : "per-class temperature scaling"} (${baseName(result.temperature_source)})` : (LANG === "es" ? "sin calibrar" : "uncalibrated")),
     row(LANG === "es" ? "Clases reales" : "True classes", cmp.available ? listOrNone(cmp.true_classes) : "—"),
     row(LANG === "es" ? "Clases predichas" : "Predicted classes", cmp.predicted_classes ? listOrNone(cmp.predicted_classes) : "—"),
-    row(LANG === "es" ? "Coincidencia exacta" : "Exact match", cmp.available ? (cmp.exact_match ? (LANG === "es" ? "Sí" : "Yes") : "No") : "—"),
+    rowHtml(LANG === "es" ? "Coincidencia exacta" : "Exact match", exactBadge),
     row("Fallback NSR", result.normal_fallback && result.normal_fallback.applied ? `${LANG === "es" ? "aplicado" : "applied"} · min=${result.normal_fallback.min_nsr_probability}` : (LANG === "es" ? "no aplicado" : "not applied")),
+    detSub(tr("detail.groupPreproc")),
     row(LANG === "es" ? "Preprocesamiento" : "Preprocessing", details.preprocessing),
     row(LANG === "es" ? "Normalización" : "Normalization", details.norm_mode || "—"),
     row(LANG === "es" ? "Estilo de trazado" : "Trace style", details.plot_style),
@@ -804,7 +846,7 @@ function renderTechnical(result) {
 
   const rows = result.predictions || [];
   probTable.innerHTML = `
-    <thead><tr><th>${tr("prob.index")}</th><th>${tr("table.class")}</th><th>${tr("table.description")}</th><th>SNOMED</th><th>${tr("prob.prob")}</th><th>${tr("prob.threshold")}</th><th>${tr("prob.margin")}</th><th>${tr("prob.state")}</th></tr></thead>
+    <thead><tr><th>${tr("prob.index")}</th><th>${tr("table.class")}</th><th>${tr("table.description")}</th><th>${tr("prob.prob")}</th><th>${tr("prob.threshold")}</th><th>${tr("prob.margin")}</th><th>${tr("prob.state")}</th></tr></thead>
     <tbody>
       ${rows.map(r => {
         const color = PALETTE[r.index % PALETTE.length];
@@ -812,9 +854,8 @@ function renderTechnical(result) {
         const pos = Number(r.prediction) === 1;
         return `<tr>
           <td class="iv-idx">${escapeHtml(r.index)}</td>
-          <td class="prob-name">${escapeHtml(r.class)}</td>
+          <td class="prob-name" title="SNOMED: ${escapeHtml(Array.isArray(r.snomed_codes) ? r.snomed_codes.join(", ") : (r.snomed_codes || ""))}">${escapeHtml(r.class)}</td>
           <td>${escapeHtml(r.display_name || r.description || "")}</td>
-          <td><code>${escapeHtml(Array.isArray(r.snomed_codes) ? r.snomed_codes.join(", ") : r.snomed_codes)}</code></td>
           <td><span class="prob-bar"><span class="prob-fill" style="width:${width}%;background:${color}"></span></span>${fmtPct(r.probability)}</td>
           <td>${fmtPct(r.threshold ?? result.threshold)}</td>
           <td>${Number(r.margin ?? 0).toFixed(3)}${r.near_threshold ? ' · ~' : ''}</td>
@@ -822,6 +863,11 @@ function renderTechnical(result) {
         </tr>`;
       }).join("")}
     </tbody>`;
+  const probNote = $("probNote");
+  if (probNote) {
+    probNote.textContent = tr("prob.marginNote");
+    probNote.hidden = false;
+  }
 }
 
 function render(result, updateModel = true) {
@@ -867,10 +913,11 @@ async function loadMetricBars() {
   }
   try {
     const resp = await fetch("/metrics");
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
     const rows = (data && data.per_class_test) || [];
     if (!rows.length) {
-      box.innerHTML = `<p class="hint muted">${escapeHtml(tr("curves.noData"))}</p>`;
+      box.innerHTML = `<p class="hint muted">${escapeHtml(tr("bars.noData"))}</p>`;
       return;
     }
     const x = rows.map(r => r.class);
@@ -887,7 +934,7 @@ async function loadMetricBars() {
       font, xaxis: { tickangle: -30 }, yaxis: { range: [0, 1] },
     }, { responsive: true, displaylogo: false });
   } catch (err) {
-    box.innerHTML = `<p class="hint muted">${escapeHtml(tr("curves.noData"))}</p>`;
+    box.innerHTML = `<p class="hint muted">${escapeHtml(tr("bars.noData"))}</p>`;
   }
 }
 
@@ -904,6 +951,16 @@ async function loadCurves() {
     const data = await resp.json();
     if (!data || !data.found) return;
     curvesCache = data;
+    try {
+      const mresp = await fetch("/metrics");
+      if (mresp.ok) {
+        const mdata = await mresp.json();
+        curvesCache.stats = {};
+        ((mdata && mdata.per_class_test) || []).forEach(r => {
+          curvesCache.stats[r.class] = r;
+        });
+      }
+    } catch (err) { /* sin stats: las curvas igual se dibujan */ }
     sel.innerHTML = data.classes.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
     sel.onchange = () => drawClassCurves(sel.value);
     if (data.classes.length) drawClassCurves(data.classes[0]);
@@ -916,6 +973,17 @@ function drawClassCurves(cls) {
   const rocBox = $("rocPlot");
   const prBox = $("prPlot");
   if (!curve || !rocBox || !prBox) return;
+  const statsBox = $("curveStats");
+  const stats = curvesCache.stats && curvesCache.stats[cls];
+  if (statsBox) {
+    if (stats && stats.auroc !== null && stats.auroc !== undefined) {
+      const fmt3 = v => (v === null || v === undefined || Number.isNaN(Number(v))) ? "—" : Number(v).toFixed(3);
+      statsBox.textContent = `${cls} · AUROC ${fmt3(stats.auroc)} · AUPRC ${fmt3(stats.auprc)} · F1 ${fmt3(stats.f1)} (test)`;
+      statsBox.hidden = false;
+    } else {
+      statsBox.hidden = true;
+    }
+  }
   const font = { color: plotFontColor(), size: 11 };
   const base = { height: 320, margin: { t: 50, r: 20 }, paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)", font, showlegend: false };
   if (curve.fpr && curve.tpr) {

@@ -10,7 +10,7 @@
 <br />
 <div align="center">
   <a href="https://github.com/PatVela/Proyectos-Universidad">
-    <img src="../../images/logo.png" alt="Logo" width="80" height="80">
+    <img src="../../images/escudo-unsa.png" alt="Escudo UNSA" height="90">
   </a>
 
 <h3 align="center">Pipeline CINC2020-12</h3>

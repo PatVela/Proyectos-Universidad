@@ -8,9 +8,10 @@
   --ink: #14202f;
   --ink-soft: #35465c;
   --muted: #6b7a8d;
-  --accent: #123b6b;
-  --accent-h: #1c4f86;
-  --accent-soft: #eaf1f8;
+  --accent: #84030c;
+  --accent-h: #a81218;
+  --accent-soft: #f9e9e9;
+  --gold: #b98a2f;
   --border: #dde3ea;
   --panel: #f8fafc;
   --panel-2: #eef3f8;
@@ -23,8 +24,8 @@
   --shadow-md: 0 1px 3px rgba(20,32,47,.07);
   --shadow-side: 0 0 0 1px rgba(20,32,47,.03), 0 8px 24px rgba(20,32,47,.06);
   --notice-bg: #fff8e6; --notice-bd: #ecdc94; --notice-fg: #7a5c00;
-  --focus: #1c4f86;
-  --side-bg: #0d2438;
+  --focus: #a81218;
+  --side-bg: #23090b;
   --side-ink: #e7eef7; --side-muted: #9db2c9;
   --plot-grid: #e6ebf2; --plot-grid-strong: #c9d4e2;
   --radius: 12px;
@@ -37,9 +38,10 @@
   --ink: #e9eef6;
   --ink-soft: #c6d0e0;
   --muted: #8794a8;
-  --accent: #5f9ade;
-  --accent-h: #7fb0e6;
-  --accent-soft: #16283c;
+  --accent: #b03a3a;
+  --accent-h: #c14e4e;
+  --accent-soft: #2a1414;
+  --gold: #cea962;
   --border: #263244;
   --panel: #0f1721;
   --panel-2: #182333;
@@ -52,8 +54,8 @@
   --shadow-md: 0 2px 8px rgba(0,0,0,.4);
   --shadow-side: 0 0 0 1px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.45);
   --notice-bg: #3a2f10; --notice-bd: #6b5518; --notice-fg: #f0d98c;
-  --focus: #7fb0e6;
-  --side-bg: #0a1a2a;
+  --focus: #d98c8c;
+  --side-bg: #160808;
   --side-ink: #e7eef7; --side-muted: #8fa3bb;
   --plot-grid: #263244; --plot-grid-strong: #33405a;
   --skel: #1c2536; --skel-hi: #243148;
@@ -89,7 +91,7 @@ body {
 
 .side-brand { display: flex; align-items: center; gap: .7rem; padding: 1.25rem 1.1rem 1rem; border-bottom: 1px solid rgba(255,255,255,.08); }
 .side-logo { flex: none; display: flex; }
-.side-logo svg { border-radius: 7px; }
+.side-logo img { border-radius: 10px; background: #fff; border: 2px solid var(--gold); }
 .side-brand-txt { display: flex; flex-direction: column; line-height: 1.25; }
 .side-brand-txt strong { font-size: .96rem; letter-spacing: -.01em; }
 .side-brand-txt span { font-size: .74rem; color: var(--side-muted); }
@@ -292,3 +294,28 @@ button:disabled { opacity: .55; cursor: not-allowed; transform: none; filter: no
 @media (max-width: 900px) {
   .plot-grid { grid-template-columns: 1fr; }
 }
+
+/* Subsecciones de la ficha del registro */
+.det-sub td {
+  font-weight: 700; font-size: .8rem; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--accent); padding: 1rem 0 .3rem !important;
+  border-bottom: 1px solid var(--border);
+}
+.det-sub:first-child td { padding-top: .2rem !important; }
+
+/* Bloque avanzado colapsable */
+.adv-det { margin: .6rem 0 0; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
+.adv-det summary { cursor: pointer; padding: .55rem .9rem; font-size: .88rem; font-weight: 600; color: var(--muted); }
+.adv-det summary:hover { color: var(--accent); }
+.adv-det table { margin: 0 .9rem .7rem; width: calc(100% - 1.8rem); }
+
+/* Veredicto de comparación + chips de código atenuados */
+.verdict { font-size: .95rem; }
+.verdict b { color: var(--ink); }
+code.dim { opacity: .65; font-size: .78em; }
+
+/* Códigos SNOMED compactos */
+.class-scroll code { font-size: .76rem; }
+
+/* Clase con tooltip de códigos */
+.prob-name { cursor: help; }

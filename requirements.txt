@@ -13,6 +13,9 @@ pandas==2.3.2
 scikit-learn==1.7.2
 matplotlib==3.10.6
 reportlab==4.4.3
+onnx==1.22.0
+onnxruntime==1.30.0
+pypdf==6.18.1
 
 wfdb==4.3.0
 h5py==3.14.0

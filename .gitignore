@@ -1,27 +1,38 @@
+# Datos y descargas (se regeneran con descargar_datos_2020.sh / build_datasets.py)
 dataset/
 dataset2017/
 dataset2020/
 dataset2020_procesado/
 dataset2020_prueba/
 training2017/
-exp-files/
-metrica-challenge/
 training2017.zip
-.vscode/
 ECG-env/
 resultados/
 results/
 saved/
 data/
-ensemble/
-ensemble-noexcl/
-eval-resnet/
-eval-resnet-v2/
-eval-resnet-v2-noexcl/
 webapp/uploads/
 webapp/results/
 logs/
 modelos/
+
+# Evaluaciones y experimentos (nombres de la guía: Pasos 4-7, 10)
+exp-files/
+metrica-challenge/
+ensemble/
+ensemble-noexcl/
+ensemble-f1/
+eval-resnet/
+eval-resnet-v2/
+eval-resnet-v2-noexcl/
+eval-resnet-fallback/
+comparacion_ensemble.csv
+errores_origen.csv
+
+# Modelos y reportes generados
+*.pt
+*.onnx
+*.pdf
 *.zip
 *.keras
 *.h5
@@ -30,4 +41,11 @@ modelos/
 *.eps
 *.atr
 *.dat
+
+# Entorno y herramientas
+.vscode/
+.env
 __pycache__/
+.pytest_cache/
+.coverage
+nohup.out

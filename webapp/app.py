@@ -53,6 +53,8 @@ def _jsonable(value: Any):
             return value.tolist()
     except Exception:
         pass
+    if isinstance(value, float) and (value != value or abs(value) == float("inf")):
+        return None
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, dict):
@@ -301,6 +303,22 @@ def _load_temperatures_for_app(model_path: str | None, saved_dir: str | None, en
     return None, None
 
 
+PERTURBATION_LABELS = {
+    "clean": ("Señal limpia", "Clean signal"),
+    "gaussian_noise": ("Ruido gaussiano", "Gaussian noise"),
+    "baseline_wander": ("Deriva de línea base", "Baseline wander"),
+    "amplitude_scale": ("Escalado de amplitud", "Amplitude scaling"),
+    "lead_dropout": ("Apagado de derivaciones", "Lead dropout"),
+}
+
+
+def _short_display_path(path) -> str:
+    """Últimos 3 segmentos de una ruta (la completa se muestra en title)."""
+    text = str(path or "").replace("\\", "/")
+    parts = [p for p in text.split("/") if p]
+    return "/".join(parts[-3:]) if parts else "—"
+
+
 def _best_worst(rows: list[dict], key: str, label: str) -> tuple[dict | None, dict | None]:
     """Mejor/peor fila por una métrica numérica (tolerante a valores ausentes)."""
     best = worst = None
@@ -398,11 +416,36 @@ def _load_experiment_results() -> dict:
                     "level": record.get("level", "—"),
                     "delta": delta,
                 }
+    for record in robustness:
+        code = str(record.get("perturbation", ""))
+        label_es, label_en = PERTURBATION_LABELS.get(code.lower(), (code, code))
+        record["perturbation_label_es"] = label_es
+        record["perturbation_label_en"] = label_en
+    if biggest_drop is not None:
+        b_es, b_en = PERTURBATION_LABELS.get(
+            str(biggest_drop["name"]).lower(), (biggest_drop["name"], biggest_drop["name"]))
+        biggest_drop["label_es"] = b_es
+        biggest_drop["label_en"] = b_en
+    comparison_verdict = None
+    scored = []
+    for record in comparison_test:
+        try:
+            scored.append((float(record.get("f1_macro")), str(record.get("model", "—"))))
+        except (TypeError, ValueError):
+            continue
+    if len(scored) >= 2:
+        scored.sort(reverse=True)
+        comparison_verdict = {
+            "winner": scored[0][1],
+            "runner_up": scored[1][1],
+            "delta": scored[0][0] - scored[1][0],
+        }
     return {
         "comparison_found": bool(comparison),
         "comparison_path": str(comparison_root / "model_comparison.csv"),
         "comparison": comparison,
         "comparison_winner": comparison_winner,
+        "comparison_verdict": comparison_verdict,
         "robustness_found": bool(robustness),
         "robustness_path": robustness_path,
         "robustness": robustness,
@@ -476,6 +519,7 @@ def create_app() -> Flask:
         if app.config["ECG_MODEL_B"] and model_info:
             model_info["model_type"] = f"Ensemble ResNet-34 ×2 (α={float(app.config['ECG_ALPHA']):.2f})"
             model_info["model_b"] = app.config["ECG_MODEL_B"]
+            model_info["model_b_short"] = _short_display_path(app.config["ECG_MODEL_B"])
         threshold_values, _ = _load_thresholds_for_app(model_path, saved_dir)
         thresholds_info = {
             "found": bool(threshold_values),
@@ -489,6 +533,7 @@ def create_app() -> Flask:
             checkpoint_options=[str(p.relative_to(REPO_ROOT)) if str(p).startswith(str(REPO_ROOT)) else str(p) for p in checkpoints],
             model_path=model_path or "",
             resolved_model=resolved_model,
+            resolved_model_short=_short_display_path(resolved_model),
             saved_dir=saved_dir,
             uploads_dir=app.config["ECG_UPLOADS_DIR"],
             results_dir=app.config["ECG_RESULTS_DIR"],

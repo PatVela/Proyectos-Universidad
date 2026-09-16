@@ -22,7 +22,7 @@
 <br />
 <div align="center">
   <a href="https://github.com/PatVela/Proyectos-Universidad">
-    <img src="images/logo.png" alt="Logo" width="100" height="100">
+    <img src="images/escudo-unsa.png" alt="Escudo UNSA" height="110">
   </a>
 
 <h3 align="center">ECG CINC2020-12 · ResNet tipo Hannun</h3>
@@ -120,14 +120,13 @@ La instalación completa es el **Paso 0** de la sección [Uso](#uso): clonado, P
 <!-- USAGE EXAMPLES -->
 ## Uso
 
-Guía completa de replicación en PowerShell (terminal integrada de VS Code, `Ctrl+Ñ`), sin venv. Todos los comandos son de una sola línea y usan variables para no escribir rutas de checkpoints a mano.
+Guía completa de replicación en PowerShell. Todos los comandos son de una sola línea y usan variables para no escribir rutas de checkpoints a mano.
 
-Notas de hardware (RTX 3050 4GB + 24GB RAM + i5-11400H):
+Notas generales:
 
-* **VRAM 4GB**: `batch_size: 64` porque v1 ya entrenó así sin OOM (el AMP ayuda). Si ve `CUDA out of memory`, baje a 32 en el JSON de configuración y reentrene.
-* **RAM 24GB**: la precarga de HDF5 (~9 GB) cabe holgada. No toque `num_workers: 0`.
-* **Torch**: instálelo aparte con la línea `cu130` del Paso 0. No instale `torchvision` (innecesario aquí).
-* **Laptop**: conéctela a corriente y ponga plan de energía en máximo rendimiento antes de entrenar.
+* Si la GPU se queda sin memoria (`CUDA out of memory`), baje `batch_size` a 32 en el JSON de configuración y reentrene.
+* No modifique `num_workers: 0` (la precarga de HDF5 usa ~9 GB de RAM).
+* PyTorch se instala aparte con CUDA (ver Paso 0); el proyecto no usa `torchvision`.
 
 Nombres usados en la guía:
 
@@ -147,8 +146,7 @@ Nombres usados en la guía:
 ```powershell
 git clone -b Paper_Replica_V3 https://github.com/PatVela/Proyectos-Universidad.git
 cd Proyectos-Universidad
-code .
-pip install torch --index-url https://download.pytorch.org/whl/cu130
+pip install -r requirements-cuda.txt
 pip install -r requirements.txt
 ```
 
@@ -158,7 +156,7 @@ Verifique GPU **antes de seguir**:
 python -c "import torch; print(torch.__version__, '| cuda:', torch.cuda.is_available())"
 ```
 
-Debe decir `cuda: True`. Si dice False: actualice el driver NVIDIA, o use `pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cu128`.
+Debe decir `cuda: True`. Si dice False: actualice el driver NVIDIA o instale la compilación de PyTorch correspondiente a su CUDA desde pytorch.org. Para CPU, omita `requirements-cuda.txt` e instale la rueda CPU de PyTorch.
 
 Smoke test (~2 min):
 
@@ -176,15 +174,15 @@ Debe decir `35 passed`. No use el dataset sintético para reportar métricas cie
 bash descargar_datos_2020.sh
 ```
 
-Si PowerShell no reconoce `bash`, abra una terminal **Git Bash** en VS Code (menú desplegable junto al `+` → *Git Bash*) y ejecútelo ahí.
+En Windows, ejecute esta línea en una terminal **Git Bash**.
 
-### Paso 2 — Construir HDF5 (~20–40 min)
+### Paso 2 — Construir HDF5 (~20–40 min según CPU)
 
 ```powershell
 python examples/cinc2020/build_datasets.py --data_dir dataset2020 --output_dir data/cinc2020_12 --workers 8 --norm_mode physical --train_windows_max 4
 ```
 
-8 workers está bien para un i5 de 6 núcleos/12 hilos. Cada HDF5 contiene `signals → (N, 5000, 12)` y `labels → (N, 12)` (12 derivaciones → 500 Hz → mV + pasa-banda 0.5–50 Hz → recorte ±5 mV → 5000 muestras); en `train`, los registros largos aportan hasta 4 ventanas de 10 s; validación y test usan una ventana centrada.
+Ajuste `--workers` al número de núcleos de su CPU. Cada HDF5 contiene `signals → (N, 5000, 12)` y `labels → (N, 12)` (12 derivaciones → 500 Hz → mV + pasa-banda 0.5–50 Hz → recorte ±5 mV → 5000 muestras); en `train`, los registros largos aportan hasta 4 ventanas de 10 s; validación y test usan una ventana centrada.
 
 ### Paso 3 — Entrenar v1 + v2
 
@@ -192,13 +190,13 @@ python examples/cinc2020/build_datasets.py --data_dir dataset2020 --output_dir d
 python -m ecg.train examples/cinc2020/config.json -e cinc2020_resnet
 ```
 
-(~35 min.) Al arrancar verifique: `Device: cuda`, `Save dir: ...cinc2020_resnet...`, `Época 1/80`. Luego:
+(~35 min en GPU). Al arrancar verifique: `Device: cuda`, `Save dir: ...cinc2020_resnet...`, `Época 1/80`. Luego:
 
 ```powershell
 python -m ecg.train examples/cinc2020/config_resnet_v2.json -e cinc2020_resnet_v2
 ```
 
-(~2.3 h.) Verifique las 5 líneas del checklist antes de dejarlo solo:
+(~2.3 h en GPU). Verifique las 5 líneas del checklist antes de dejarlo solo:
 
 ```text
 Device       : cuda
@@ -230,7 +228,7 @@ python examples/cinc2020/calibrate.py --checkpoint $resnet --val-h5 data/cinc202
 python examples/cinc2020/calibrate.py --checkpoint $resnet2 --val-h5 data/cinc2020_12/val.h5 --output-dir eval-resnet-v2
 ```
 
-### Paso 5 — Evaluar (~10 min c/u)
+### Paso 5 — Evaluar (~10 min c/u en GPU)
 
 ```powershell
 python examples/cinc2020/evaluate.py examples/cinc2020/config.json $resnet --output-dir eval-resnet --temperatures eval-resnet/temperatures_validation.csv --threshold-beta 0.5
