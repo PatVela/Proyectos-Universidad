@@ -37,11 +37,7 @@ Ambos modelos deben usar:
 - mismas métricas de evaluación.
 
 ```bash
-python examples/cinc2020/compare_models.py \
-  --eval-a results/cinc2020_12_resnet \
-  --eval-b <dir-evaluacion-v2> \
-  --label-a "ResNet v1" --label-b "ResNet v2" \
-  --output results/cinc2020_12/model_comparison.csv
+python examples/cinc2020/compare_models.py --eval-a results/cinc2020_12_resnet --eval-b <dir-evaluacion-v2> --label-a "ResNet v1" --label-b "ResNet v2" --output results/cinc2020_12/model_comparison.csv
 ```
 
 ## Experimento C — Ensemble v1+v2 (modelo final)
@@ -70,11 +66,7 @@ Ver resultados en [resultados_finales.md](resultados_finales.md).
 ## Robustez controlada
 
 ```bash
-python examples/cinc2020/robustness.py \
-  saved/cinc2020/cinc2020_resnet/<run>/best.pt \
-  data/cinc2020_12/test.h5 \
-  --thresholds results/cinc2020_12_resnet/thresholds_validation.csv \
-  --output results/cinc2020_12_resnet/robustness.csv
+python examples/cinc2020/robustness.py saved/cinc2020/cinc2020_resnet/<run>/best.pt data/cinc2020_12/test.h5 --thresholds results/cinc2020_12_resnet/thresholds_validation.csv --output results/cinc2020_12_resnet/robustness.csv
 ```
 
 Perturbaciones incluidas: ruido gaussiano, baseline wander, escalado de amplitud y dropout de derivaciones.

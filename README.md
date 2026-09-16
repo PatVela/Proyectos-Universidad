@@ -68,9 +68,7 @@
     <li><a href="#pruebas-y-despliegue">Pruebas y despliegue</a></li>
     <li><a href="#diferencias-frente-a-hannun-et-al">Diferencias frente a Hannun et al.</a></li>
     <li><a href="#roadmap">Roadmap</a></li>
-    <li><a href="#contribuir">Contribuir</a></li>
     <li><a href="#licencia">Licencia</a></li>
-    <li><a href="#contacto">Contacto</a></li>
     <li><a href="#agradecimientos">Agradecimientos</a></li>
   </ol>
 </details>
@@ -140,18 +138,16 @@ Para tener una copia local funcionando, siga estos pasos.
 <!-- USAGE EXAMPLES -->
 ## Uso
 
-Pipeline completo, en orden:
+Pipeline completo de replicación, en orden. Todos los comandos son de una sola línea y usan barras `/` en las rutas, así que funcionan igual en PowerShell (Windows) y en bash (Linux):
 
 1. **Descargar CINC2020** (subconjuntos `cpsc_2018`, `cpsc_2018_extra`, `georgia`, `ptb`, `ptb-xl`, `st_petersburg_incart`):
    ```sh
    bash descargar_datos_2020.sh
    ```
+   En Windows, ejecuta esta línea en una terminal **Git Bash** (en VS Code: nueva terminal → Git Bash). El resto de comandos van en PowerShell.
 2. **Construir datasets HDF5** (12 derivaciones → 500 Hz → mV + pasa-banda 0.5–50 Hz → recorte ±5 mV → 5000 muestras):
    ```sh
-   python examples/cinc2020/build_datasets.py \
-     --data_dir dataset2020 \
-     --output_dir data/cinc2020_12 \
-     --workers 6 --chunksize 8 --write_batch_size 32
+   python examples/cinc2020/build_datasets.py --data_dir dataset2020 --output_dir data/cinc2020_12 --workers 6 --chunksize 8 --write_batch_size 32
    ```
    Cada HDF5 contiene `signals → (N, 5000, 12)` y `labels → (N, 12)`. En `train`, los registros largos aportan hasta 4 ventanas de 10 s; validación y test usan una ventana centrada.
 3. **Entrenar ResNet-34 v1** (receta base):
@@ -162,21 +158,28 @@ Pipeline completo, en orden:
    ```sh
    python -m ecg.train examples/cinc2020/config_resnet_v2.json -e cinc2020_resnet_v2
    ```
-5. **Calibrar y evaluar** (temperature scaling + umbrales F0.5 en validación, métricas en test):
+   Si la GPU se queda sin memoria, baja `batch_size` a 32 en el JSON de configuración y reentrena. Al terminar, anota la ruta del mejor checkpoint de cada modelo: abajo aparecen como `mejor-v1.pt` y `mejor-v2.pt`.
+5. **Calibrar y evaluar v1** (temperature scaling + umbrales F0.5 en validación, métricas en test):
    ```sh
-   python examples/cinc2020/calibrate.py --checkpoint <mejor-v1.pt> --val-h5 data/cinc2020_12/val.h5 --output-dir <dir-evaluacion>
-   python examples/cinc2020/evaluate.py examples/cinc2020/config.json <mejor-v1.pt> --output-dir <dir-evaluacion> --temperatures <dir-evaluacion>/temperatures_validation.csv --threshold-beta 0.5
+   python examples/cinc2020/calibrate.py --checkpoint mejor-v1.pt --val-h5 data/cinc2020_12/val.h5 --output-dir eval-resnet
+   python examples/cinc2020/evaluate.py examples/cinc2020/config.json mejor-v1.pt --output-dir eval-resnet --temperatures eval-resnet/temperatures_validation.csv --threshold-beta 0.5
    ```
-   El directorio de salida contendrá umbrales por clase, métricas por clase y globales, predicciones de validación/test, matrices de confusión 2×2, curvas ROC/PR y un resumen JSON.
-6. **Ensemble y comparación** (promedio v1+v2, mismo layout de salida):
+6. **Calibrar y evaluar v2** (igual que el paso 5, con el config y checkpoint v2):
    ```sh
-   python examples/cinc2020/ensemble_evaluate.py examples/cinc2020/config.json <mejor-v1.pt> <mejor-v2.pt> --output-dir <dir-ensemble> --threshold-beta 0.5 --temperatures-a <temperaturas-a>.csv --temperatures-b <temperaturas-b>.csv
-   python examples/cinc2020/compare_models.py --eval-a <dir-eval-a> --eval-b <dir-eval-b> --output <comparacion.csv>
+   python examples/cinc2020/calibrate.py --checkpoint mejor-v2.pt --val-h5 data/cinc2020_12/val.h5 --output-dir eval-resnet-v2
+   python examples/cinc2020/evaluate.py examples/cinc2020/config_resnet_v2.json mejor-v2.pt --output-dir eval-resnet-v2 --temperatures eval-resnet-v2/temperatures_validation.csv --threshold-beta 0.5
    ```
-7. **Abrir la aplicación web** (predice con el ensemble final):
+   Cada directorio de salida contendrá umbrales por clase, métricas por clase y globales, predicciones de validación/test, matrices de confusión 2×2, curvas ROC/PR y un resumen JSON.
+7. **Ensemble y comparación** (promedio v1+v2, mismo layout de salida):
    ```sh
-   python webapp/app.py --saved saved --eval-dir <dir-ensemble> --model <mejor-v1.pt> --model-b <mejor-v2.pt> --temperatures <temperaturas-a>.csv --temperatures-b <temperaturas-b>.csv
+   python examples/cinc2020/ensemble_evaluate.py examples/cinc2020/config.json mejor-v1.pt mejor-v2.pt --output-dir ensemble --threshold-beta 0.5 --temperatures-a eval-resnet/temperatures_validation.csv --temperatures-b eval-resnet-v2/temperatures_validation.csv
+   python examples/cinc2020/compare_models.py --eval-a eval-resnet --eval-b eval-resnet-v2 --output comparacion.csv
    ```
+8. **Abrir la aplicación web** (predice con el ensemble final):
+   ```sh
+   python webapp/app.py --saved saved --eval-dir ensemble --model mejor-v1.pt --model-b mejor-v2.pt --temperatures eval-resnet/temperatures_validation.csv --temperatures-b eval-resnet-v2/temperatures_validation.csv
+   ```
+   La terminal mostrará la dirección local (por defecto http://127.0.0.1:5000): ábrela en el navegador.
 
 _Más ejemplos y comandos avanzados en [examples/cinc2020/README.md](examples/cinc2020/README.md) y [webapp/README.md](webapp/README.md)._
 
@@ -322,38 +325,10 @@ Ver los [issues abiertos](https://github.com/PatVela/Proyectos-Universidad/issue
 
 <p align="right">(<a href="#readme-top">volver arriba</a>)</p>
 
-<!-- CONTRIBUTING -->
-## Contribuir
-
-Las contribuciones hacen de la comunidad open source un lugar increíble para aprender e inspirarse. Cualquier aporte será **muy apreciado**.
-
-1. Haga Fork del proyecto
-2. Cree su rama (`git checkout -b feature/Funcionalidad`)
-3. Haga Commit (`git commit -m 'Agrega Funcionalidad'`)
-4. Haga Push (`git push origin feature/Funcionalidad`)
-5. Abra un Pull Request
-
-### Top contributors:
-
-<a href="https://github.com/PatVela/Proyectos-Universidad/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=PatVela/Proyectos-Universidad" alt="contrib.rocks image" />
-</a>
-
-<p align="right">(<a href="#readme-top">volver arriba</a>)</p>
-
 <!-- LICENSE -->
 ## Licencia
 
 Distribuido bajo licencia GPL-3.0. Ver `LICENSE` para más información.
-
-<p align="right">(<a href="#readme-top">volver arriba</a>)</p>
-
-<!-- CONTACT -->
-## Contacto
-
-PatVela — Universidad Nacional de San Agustín de Arequipa, Escuela Profesional de Ingeniería Electrónica.
-
-Link del proyecto: [https://github.com/PatVela/Proyectos-Universidad](https://github.com/PatVela/Proyectos-Universidad)
 
 <p align="right">(<a href="#readme-top">volver arriba</a>)</p>
 

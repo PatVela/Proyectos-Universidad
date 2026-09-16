@@ -18,6 +18,7 @@ eval-resnet-v2/
 eval-resnet-v2-noexcl/
 webapp/uploads/
 webapp/results/
+metrica-challenge/
 logs/
 modelos/
 *.zip

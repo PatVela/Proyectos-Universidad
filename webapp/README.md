@@ -51,7 +51,6 @@
     <li><a href="#estructura">Estructura</a></li>
     <li><a href="#roadmap">Roadmap</a></li>
     <li><a href="#licencia">Licencia</a></li>
-    <li><a href="#contacto">Contacto</a></li>
   </ol>
 </details>
 
@@ -98,14 +97,7 @@ python webapp/app.py --saved saved
 Carpeta específica, host y puerto personalizados:
 
 ```sh
-python webapp/app.py \
-  --saved saved/cinc2020 \
-  --eval-dir <dir-evaluacion> \
-  --exp-dir <dir-experimentos> \
-  --uploads <dir-subidas> \
-  --results <dir-salidas-web> \
-  --host 0.0.0.0 \
-  --port 5002
+python webapp/app.py --saved saved/cinc2020 --eval-dir <dir-evaluacion> --exp-dir <dir-experimentos> --uploads <dir-subidas> --results <dir-salidas-web> --host 0.0.0.0 --port 5002
 ```
 
 Con `--eval-dir` la app lee métricas, umbrales, temperaturas y curvas de esa carpeta; con `--exp-dir` lee la comparación de modelos y la robustez. Si se omiten, se buscan automáticamente.
@@ -119,22 +111,14 @@ python webapp/app.py --model saved/cinc2020/cinc2020_resnet/<run>/best.pt
 Si los umbrales calibrados están en una ruta no estándar, páselos explícitamente:
 
 ```sh
-python webapp/app.py \
-  --saved saved \
-  --thresholds <umbrales-por-clase.csv>
+python webapp/app.py --saved saved --thresholds <umbrales-por-clase.csv>
 ```
 
 Modo ensemble (modelo final recomendado): promedia dos checkpoints con calibración por modelo
 y usa los umbrales del directorio del ensemble:
 
 ```sh
-python webapp/app.py \
-  --eval-dir <dir-ensemble> \
-  --model <mejor-a.pt> \
-  --model-b <mejor-b.pt> \
-  --alpha 0.5 \
-  --temperatures <temperaturas-a>.csv \
-  --temperatures-b <temperaturas-b>.csv
+python webapp/app.py --eval-dir <dir-ensemble> --model <mejor-a.pt> --model-b <mejor-b.pt> --alpha 0.5 --temperatures <temperaturas-a>.csv --temperatures-b <temperaturas-b>.csv
 ```
 
 Para demos puede dejar activo el fallback normal: si ninguna clase supera su umbral y `P(NSR) >= 0.40`, la salida final añade `NSR` como postprocesamiento explícito (no cambia probabilidades ni pesos). Para desactivarlo:
@@ -235,14 +219,6 @@ Ver los [issues abiertos](https://github.com/PatVela/Proyectos-Universidad/issue
 ## Licencia
 
 Distribuido bajo licencia GPL-3.0. Ver `LICENSE` en la raíz para más información.
-
-<p align="right">(<a href="#readme-top">volver arriba</a>)</p>
-
-## Contacto
-
-PatVela — Universidad Nacional de San Agustín de Arequipa.
-
-Link del proyecto: [https://github.com/PatVela/Proyectos-Universidad](https://github.com/PatVela/Proyectos-Universidad)
 
 <p align="right">(<a href="#readme-top">volver arriba</a>)</p>
 

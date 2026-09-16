@@ -77,32 +77,19 @@ git pull
 pip install -r requirements.txt   # ahora incluye torch; en CUDA use requirements-cuda.txt
 
 # 1) Reconstruir HDF5 con esquema v2 (multi-ventana en train)
-python examples/cinc2020/build_datasets.py \
-  --data_dir dataset2020 --output_dir data/cinc2020_12 \
-  --workers 6 --norm_mode physical --train_windows_max 4
+python examples/cinc2020/build_datasets.py --data_dir dataset2020 --output_dir data/cinc2020_12 --workers 6 --norm_mode physical --train_windows_max 4
 
 # 2) Reentrenar (ResNet)
 python -m ecg.train examples/cinc2020/config.json -e cinc2020_resnet
 
 # 3) Evaluar (thresholds en val, métricas en test)
-python examples/cinc2020/evaluate.py examples/cinc2020/config.json \
-  saved/cinc2020/cinc2020_resnet/<run>/best.pt --output-dir results/cinc2020_12_resnet
+python examples/cinc2020/evaluate.py examples/cinc2020/config.json saved/cinc2020/cinc2020_resnet/<run>/best.pt --output-dir results/cinc2020_12_resnet
 
 # 4) Métrica oficial estilo Challenge (27 códigos)
-python examples/cinc2020/challenge_score.py \
-  --checkpoint saved/cinc2020/cinc2020_resnet/<run>/best.pt \
-  --test-h5 data/cinc2020_12/test.h5 \
-  --thresholds results/cinc2020_12_resnet/thresholds_validation.csv \
-  --output-dir results/cinc2020_12_resnet/challenge_metric
+python examples/cinc2020/challenge_score.py --checkpoint saved/cinc2020/cinc2020_resnet/<run>/best.pt --test-h5 data/cinc2020_12/test.h5 --thresholds results/cinc2020_12_resnet/thresholds_validation.csv --output-dir results/cinc2020_12_resnet/challenge_metric
 
 # 5) Verificar casos reportados
-python examples/cinc2020/diagnose_prediction.py \
-  --checkpoint saved/cinc2020/cinc2020_resnet/<run>/best.pt \
-  --config examples/cinc2020/config.json \
-  --thresholds results/cinc2020_12_resnet/thresholds_validation.csv \
-  --record E00014 \
-  --hea dataset2020/training/georgia/g1/E00014.hea \
-  --mat dataset2020/training/georgia/g1/E00014.mat
+python examples/cinc2020/diagnose_prediction.py --checkpoint saved/cinc2020/cinc2020_resnet/<run>/best.pt --config examples/cinc2020/config.json --thresholds results/cinc2020_12_resnet/thresholds_validation.csv --record E00014 --hea dataset2020/training/georgia/g1/E00014.hea --mat dataset2020/training/georgia/g1/E00014.mat
 
 # 6) Webapp (usa automáticamente esquema/thresholds del checkpoint)
 python webapp/app.py --saved saved
