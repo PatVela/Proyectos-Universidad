@@ -113,73 +113,192 @@ Para tener una copia local funcionando, siga estos pasos.
 
 ### Instalación
 
-1. Clone el repositorio (rama del proyecto):
-   ```sh
-   git clone -b Paper_Replica_V3 https://github.com/PatVela/Proyectos-Universidad.git
-   cd Proyectos-Universidad
-   ```
-2. Instale dependencias:
-   ```sh
-   pip install -r requirements.txt
-   ```
-3. Para CUDA, instale PyTorch según su entorno (referencia CUDA 12.8 incluida):
-   ```sh
-   pip install -r requirements-cuda.txt
-   ```
-4. Solo para verificar la estructura sin descargar datos, use el dataset sintético:
-   ```sh
-   python examples/cinc2020/make_syntethic.py
-   python -m ecg.train examples/cinc2020/config_syntethic.json -e smoke_test --epochs 1 --device cpu --no-amp
-   ```
-   No use el dataset sintético para reportar métricas científicas.
+La instalación completa es el **Paso 0** de la sección [Uso](#uso): clonado, PyTorch con CUDA, dependencias, verificación de GPU y smoke test, en orden. Siga los pasos 0–10 sin saltarse la verificación de `cuda: True`.
 
 <p align="right">(<a href="#readme-top">volver arriba</a>)</p>
 
 <!-- USAGE EXAMPLES -->
 ## Uso
 
-Pipeline completo de replicación, en orden. Todos los comandos son de una sola línea y usan barras `/` en las rutas, así que funcionan igual en PowerShell (Windows) y en bash (Linux):
+Guía completa de replicación en PowerShell (terminal integrada de VS Code, `Ctrl+Ñ`), sin venv. Todos los comandos son de una sola línea y usan variables para no escribir rutas de checkpoints a mano.
 
-1. **Descargar CINC2020** (subconjuntos `cpsc_2018`, `cpsc_2018_extra`, `georgia`, `ptb`, `ptb-xl`, `st_petersburg_incart`):
-   ```sh
-   bash descargar_datos_2020.sh
-   ```
-   En Windows, ejecuta esta línea en una terminal **Git Bash** (en VS Code: nueva terminal → Git Bash). El resto de comandos van en PowerShell.
-2. **Construir datasets HDF5** (12 derivaciones → 500 Hz → mV + pasa-banda 0.5–50 Hz → recorte ±5 mV → 5000 muestras):
-   ```sh
-   python examples/cinc2020/build_datasets.py --data_dir dataset2020 --output_dir data/cinc2020_12 --workers 6 --chunksize 8 --write_batch_size 32
-   ```
-   Cada HDF5 contiene `signals → (N, 5000, 12)` y `labels → (N, 12)`. En `train`, los registros largos aportan hasta 4 ventanas de 10 s; validación y test usan una ventana centrada.
-3. **Entrenar ResNet-34 v1** (receta base):
-   ```sh
-   python -m ecg.train examples/cinc2020/config.json -e cinc2020_resnet
-   ```
-4. **Entrenar ResNet-34 v2** (aumentación, label smoothing, selección por F1-macro):
-   ```sh
-   python -m ecg.train examples/cinc2020/config_resnet_v2.json -e cinc2020_resnet_v2
-   ```
-   Si la GPU se queda sin memoria, baja `batch_size` a 32 en el JSON de configuración y reentrena. Al terminar, anota la ruta del mejor checkpoint de cada modelo: abajo aparecen como `mejor-v1.pt` y `mejor-v2.pt`.
-5. **Calibrar y evaluar v1** (temperature scaling + umbrales F0.5 en validación, métricas en test):
-   ```sh
-   python examples/cinc2020/calibrate.py --checkpoint mejor-v1.pt --val-h5 data/cinc2020_12/val.h5 --output-dir eval-resnet
-   python examples/cinc2020/evaluate.py examples/cinc2020/config.json mejor-v1.pt --output-dir eval-resnet --temperatures eval-resnet/temperatures_validation.csv --threshold-beta 0.5
-   ```
-6. **Calibrar y evaluar v2** (igual que el paso 5, con el config y checkpoint v2):
-   ```sh
-   python examples/cinc2020/calibrate.py --checkpoint mejor-v2.pt --val-h5 data/cinc2020_12/val.h5 --output-dir eval-resnet-v2
-   python examples/cinc2020/evaluate.py examples/cinc2020/config_resnet_v2.json mejor-v2.pt --output-dir eval-resnet-v2 --temperatures eval-resnet-v2/temperatures_validation.csv --threshold-beta 0.5
-   ```
-   Cada directorio de salida contendrá umbrales por clase, métricas por clase y globales, predicciones de validación/test, matrices de confusión 2×2, curvas ROC/PR y un resumen JSON.
-7. **Ensemble y comparación** (promedio v1+v2, mismo layout de salida):
-   ```sh
-   python examples/cinc2020/ensemble_evaluate.py examples/cinc2020/config.json mejor-v1.pt mejor-v2.pt --output-dir ensemble --threshold-beta 0.5 --temperatures-a eval-resnet/temperatures_validation.csv --temperatures-b eval-resnet-v2/temperatures_validation.csv
-   python examples/cinc2020/compare_models.py --eval-a eval-resnet --eval-b eval-resnet-v2 --output comparacion.csv
-   ```
-8. **Abrir la aplicación web** (predice con el ensemble final):
-   ```sh
-   python webapp/app.py --saved saved --eval-dir ensemble --model mejor-v1.pt --model-b mejor-v2.pt --temperatures eval-resnet/temperatures_validation.csv --temperatures-b eval-resnet-v2/temperatures_validation.csv
-   ```
-   La terminal mostrará la dirección local (por defecto http://127.0.0.1:5000): ábrela en el navegador.
+Notas de hardware (RTX 3050 4GB + 24GB RAM + i5-11400H):
+
+* **VRAM 4GB**: `batch_size: 64` porque v1 ya entrenó así sin OOM (el AMP ayuda). Si ve `CUDA out of memory`, baje a 32 en el JSON de configuración y reentrene.
+* **RAM 24GB**: la precarga de HDF5 (~9 GB) cabe holgada. No toque `num_workers: 0`.
+* **Torch**: instálelo aparte con la línea `cu130` del Paso 0. No instale `torchvision` (innecesario aquí).
+* **Laptop**: conéctela a corriente y ponga plan de energía en máximo rendimiento antes de entrenar.
+
+Nombres usados en la guía:
+
+| Carpeta/archivo | Contenido |
+|---|---|
+| `eval-resnet` | Calibración + evaluación ResNet v1 |
+| `eval-resnet-v2` | Calibración + evaluación ResNet v2 |
+| `exp-files` | `model_comparison.csv` (v1 vs v2) + `robustness.csv` |
+| `ensemble` | Ensemble ResNet v1 + v2 |
+| `comparacion_ensemble.csv` | Ensemble vs mejor individual |
+| `metrica-challenge` | Métrica oficial estilo Challenge |
+| `errores_origen.csv` | Errores por hospital |
+| `resnet12.onnx` | Modelo exportado |
+
+### Paso 0 — Instalación y verificación
+
+```powershell
+git clone -b Paper_Replica_V3 https://github.com/PatVela/Proyectos-Universidad.git
+cd Proyectos-Universidad
+code .
+pip install torch --index-url https://download.pytorch.org/whl/cu130
+pip install -r requirements.txt
+```
+
+Verifique GPU **antes de seguir**:
+
+```powershell
+python -c "import torch; print(torch.__version__, '| cuda:', torch.cuda.is_available())"
+```
+
+Debe decir `cuda: True`. Si dice False: actualice el driver NVIDIA, o use `pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cu128`.
+
+Smoke test (~2 min):
+
+```powershell
+python examples/cinc2020/make_syntethic.py
+python -m ecg.train examples/cinc2020/config_syntethic.json -e smoke_test --epochs 1 --device cpu --no-amp
+pytest tests/ -q
+```
+
+Debe decir `35 passed`. No use el dataset sintético para reportar métricas científicas.
+
+### Paso 1 — Descargar datos (~15 GB)
+
+```powershell
+bash descargar_datos_2020.sh
+```
+
+Si PowerShell no reconoce `bash`, abra una terminal **Git Bash** en VS Code (menú desplegable junto al `+` → *Git Bash*) y ejecútelo ahí.
+
+### Paso 2 — Construir HDF5 (~20–40 min)
+
+```powershell
+python examples/cinc2020/build_datasets.py --data_dir dataset2020 --output_dir data/cinc2020_12 --workers 8 --norm_mode physical --train_windows_max 4
+```
+
+8 workers está bien para un i5 de 6 núcleos/12 hilos. Cada HDF5 contiene `signals → (N, 5000, 12)` y `labels → (N, 12)` (12 derivaciones → 500 Hz → mV + pasa-banda 0.5–50 Hz → recorte ±5 mV → 5000 muestras); en `train`, los registros largos aportan hasta 4 ventanas de 10 s; validación y test usan una ventana centrada.
+
+### Paso 3 — Entrenar v1 + v2
+
+```powershell
+python -m ecg.train examples/cinc2020/config.json -e cinc2020_resnet
+```
+
+(~35 min.) Al arrancar verifique: `Device: cuda`, `Save dir: ...cinc2020_resnet...`, `Época 1/80`. Luego:
+
+```powershell
+python -m ecg.train examples/cinc2020/config_resnet_v2.json -e cinc2020_resnet_v2
+```
+
+(~2.3 h.) Verifique las 5 líneas del checklist antes de dejarlo solo:
+
+```text
+Device       : cuda
+Save dir     : ...cinc2020_resnet_v2...
+Aumentación activada (solo train): {...}
+Monitorizando: val_f1_macro
+Época 1/150
+```
+
+Opcional, segunda semilla para quedarse con la mejor:
+
+```powershell
+python -m ecg.train examples/cinc2020/config_resnet_v2.json -e cinc2020_resnet_v2b --seed 44
+```
+
+### Paso 4 — Checkpoints y calibración
+
+```powershell
+$resnet = Get-ChildItem saved/cinc2020/cinc2020_resnet/*/best.pt | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+$resnet2 = Get-ChildItem saved/cinc2020/cinc2020_resnet_v2*/best.pt | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+$resnet
+$resnet2
+```
+
+**Lea las dos rutas**: deben apuntar a `cinc2020_resnet...` y `cinc2020_resnet_v2*...` respectivamente. Si ve un run abortado a medias, bórrelo primero con `Remove-Item -Recurse` apuntando a la carpeta de ese run.
+
+```powershell
+python examples/cinc2020/calibrate.py --checkpoint $resnet --val-h5 data/cinc2020_12/val.h5 --output-dir eval-resnet
+python examples/cinc2020/calibrate.py --checkpoint $resnet2 --val-h5 data/cinc2020_12/val.h5 --output-dir eval-resnet-v2
+```
+
+### Paso 5 — Evaluar (~10 min c/u)
+
+```powershell
+python examples/cinc2020/evaluate.py examples/cinc2020/config.json $resnet --output-dir eval-resnet --temperatures eval-resnet/temperatures_validation.csv --threshold-beta 0.5
+python examples/cinc2020/evaluate.py examples/cinc2020/config_resnet_v2.json $resnet2 --output-dir eval-resnet-v2 --temperatures eval-resnet-v2/temperatures_validation.csv --threshold-beta 0.5
+```
+
+Sin `--nsr-exclusive-min-prob`: esa regla resultó perjudicial en ablación (−11 pts de F1-macro sin ganancia de precisión) y no se usa. Cada directorio contendrá umbrales por clase, métricas por clase y globales, predicciones de validación/test, matrices de confusión 2×2, curvas ROC/PR y un resumen JSON.
+
+### Paso 6 — Comparar v1 vs v2 y elegir el mejor
+
+```powershell
+python examples/cinc2020/compare_models.py --eval-a eval-resnet --eval-b eval-resnet-v2 --label-a "ResNet v1" --label-b "ResNet v2" --output exp-files/model_comparison.csv
+```
+
+Abra `exp-files/model_comparison.csv` en VS Code, mire F1-macro en test y defina el ganador (ajuste según lo que vea; aquí se asume v2):
+
+```powershell
+$mejor = $resnet2
+$evalMejor = "eval-resnet-v2"
+```
+
+### Paso 7 — Ensemble + experimentos
+
+```powershell
+python examples/cinc2020/ensemble_evaluate.py examples/cinc2020/config.json $resnet $resnet2 --output-dir ensemble --alpha 0.5 --threshold-beta 0.5 --temperatures-a eval-resnet/temperatures_validation.csv --temperatures-b eval-resnet-v2/temperatures_validation.csv
+python examples/cinc2020/compare_models.py --eval-a "$evalMejor" --eval-b ensemble --label-a "ResNet mejor" --label-b "Ensemble" --output comparacion_ensemble.csv
+python examples/cinc2020/robustness.py $mejor data/cinc2020_12/test.h5 --thresholds "$evalMejor/thresholds_validation.csv" --output exp-files/robustness.csv
+python examples/cinc2020/challenge_score.py --checkpoint $mejor --test-h5 data/cinc2020_12/test.h5 --thresholds "$evalMejor/thresholds_validation.csv" --output-dir metrica-challenge
+python examples/cinc2020/error_analysis.py --predictions "$evalMejor/predictions_test.csv" --test-h5 data/cinc2020_12/test.h5 --output errores_origen.csv
+```
+
+### Paso 8 — Diagnóstico de registros ejemplo
+
+```powershell
+$hea1 = Get-ChildItem dataset2020 -Recurse -Filter E00001.hea | Select-Object -First 1 -ExpandProperty FullName
+$mat1 = [System.IO.Path]::ChangeExtension($hea1, '.mat')
+python examples/cinc2020/diagnose_prediction.py --checkpoint $mejor --config examples/cinc2020/config.json --thresholds "$evalMejor/thresholds_validation.csv" --record E00001 --hea $hea1 --mat $mat1
+$hea14 = Get-ChildItem dataset2020 -Recurse -Filter E00014.hea | Select-Object -First 1 -ExpandProperty FullName
+$mat14 = [System.IO.Path]::ChangeExtension($hea14, '.mat')
+python examples/cinc2020/diagnose_prediction.py --checkpoint $mejor --config examples/cinc2020/config.json --thresholds "$evalMejor/thresholds_validation.csv" --record E00014 --hea $hea14 --mat $mat14
+```
+
+### Paso 9 — Webapp (ensemble final)
+
+```powershell
+python webapp/app.py --saved saved --eval-dir ensemble --exp-dir exp-files --model $resnet --model-b $resnet2 --temperatures eval-resnet/temperatures_validation.csv --temperatures-b eval-resnet-v2/temperatures_validation.csv --port 5002
+```
+
+Abra http://127.0.0.1:5002 y pruebe con `E00001.hea + E00001.mat`.
+
+### Paso 10 — ONNX y Docker (opcionales)
+
+```powershell
+python examples/cinc2020/export_onnx.py --checkpoint $mejor --output resnet12.onnx
+docker build -t ecg-cinc2020 .
+docker run --rm -p 5002:5002 -v ./saved:/app/saved:ro ecg-cinc2020
+```
+
+En Linux/bash los comandos `python`, `pytest`, `bash` y `docker` son idénticos; solo cambia cómo se definen las variables (usar `$resnet`, `$mejor`, etc. dentro de los comandos funciona igual):
+
+```bash
+resnet=$(ls -t saved/cinc2020/cinc2020_resnet/*/best.pt | head -1)
+resnet2=$(ls -t saved/cinc2020/cinc2020_resnet_v2*/best.pt | head -1)
+mejor=$resnet2
+evalMejor="eval-resnet-v2"
+hea1=$(find dataset2020 -name E00001.hea | head -1)
+mat1="${hea1%.hea}.mat"
+```
 
 _Más ejemplos y comandos avanzados en [examples/cinc2020/README.md](examples/cinc2020/README.md) y [webapp/README.md](webapp/README.md)._
 

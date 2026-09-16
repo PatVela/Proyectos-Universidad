@@ -52,7 +52,7 @@ del centro se pierden, pero la etiqueta del registro completo se mantiene
 - `load_model` solo validaba el **número** de clases, no los **nombres**: un
   checkpoint con otro orden/agrupación se cargaba sin advertencia.
 - Thresholds podían cargarse de otro experimento (búsqueda por fecha en
-  `results/**/thresholds_validation.csv`) sin validar cobertura de clases.
+  cualquier `thresholds_validation.csv` generado por `evaluate.py`) sin validar cobertura de clases.
 - Re-subir el CSV convertido generaba **doble normalización** (en v2 físico
   sería catastrófico: dividir por 1000 dos veces).
 - Unidades de CSV de usuario ambiguas (mV vs ADC) sin heurística.
@@ -72,24 +72,29 @@ del centro se pierden, pero la etiqueta del registro completo se mantiene
 
 ## 3. Migración (pasos para reentrenar en v2)
 
-```bash
+```powershell
 git pull
-pip install -r requirements.txt   # ahora incluye torch; en CUDA use requirements-cuda.txt
+pip install -r requirements.txt   # torch se instala aparte (ver README, Paso 0)
+
+# 0) Checkpoints (una vez por terminal)
+$resnet = Get-ChildItem saved/cinc2020/cinc2020_resnet/*/best.pt | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
 
 # 1) Reconstruir HDF5 con esquema v2 (multi-ventana en train)
-python examples/cinc2020/build_datasets.py --data_dir dataset2020 --output_dir data/cinc2020_12 --workers 6 --norm_mode physical --train_windows_max 4
+python examples/cinc2020/build_datasets.py --data_dir dataset2020 --output_dir data/cinc2020_12 --workers 8 --norm_mode physical --train_windows_max 4
 
 # 2) Reentrenar (ResNet)
 python -m ecg.train examples/cinc2020/config.json -e cinc2020_resnet
 
 # 3) Evaluar (thresholds en val, métricas en test)
-python examples/cinc2020/evaluate.py examples/cinc2020/config.json saved/cinc2020/cinc2020_resnet/<run>/best.pt --output-dir results/cinc2020_12_resnet
+python examples/cinc2020/evaluate.py examples/cinc2020/config.json $resnet --output-dir eval-resnet --temperatures eval-resnet/temperatures_validation.csv --threshold-beta 0.5
 
 # 4) Métrica oficial estilo Challenge (27 códigos)
-python examples/cinc2020/challenge_score.py --checkpoint saved/cinc2020/cinc2020_resnet/<run>/best.pt --test-h5 data/cinc2020_12/test.h5 --thresholds results/cinc2020_12_resnet/thresholds_validation.csv --output-dir results/cinc2020_12_resnet/challenge_metric
+python examples/cinc2020/challenge_score.py --checkpoint $resnet --test-h5 data/cinc2020_12/test.h5 --thresholds eval-resnet/thresholds_validation.csv --output-dir metrica-challenge
 
 # 5) Verificar casos reportados
-python examples/cinc2020/diagnose_prediction.py --checkpoint saved/cinc2020/cinc2020_resnet/<run>/best.pt --config examples/cinc2020/config.json --thresholds results/cinc2020_12_resnet/thresholds_validation.csv --record E00014 --hea dataset2020/training/georgia/g1/E00014.hea --mat dataset2020/training/georgia/g1/E00014.mat
+$hea14 = Get-ChildItem dataset2020 -Recurse -Filter E00014.hea | Select-Object -First 1 -ExpandProperty FullName
+$mat14 = [System.IO.Path]::ChangeExtension($hea14, '.mat')
+python examples/cinc2020/diagnose_prediction.py --checkpoint $resnet --config examples/cinc2020/config.json --thresholds eval-resnet/thresholds_validation.csv --record E00014 --hea $hea14 --mat $mat14
 
 # 6) Webapp (usa automáticamente esquema/thresholds del checkpoint)
 python webapp/app.py --saved saved
@@ -101,7 +106,7 @@ python webapp/app.py --saved saved
    automáticamente `per_lead_zscore` para checkpoints v1 (sin mezcla de
    esquemas) + ventanas deslizantes en registros largos.
 2. Fijar checkpoint explícito si hay varios en `saved/`:
-   `python webapp/app.py --model saved/.../best.pt --thresholds results/.../thresholds_validation.csv`
+   `python webapp/app.py --model $resnet --thresholds eval-resnet/thresholds_validation.csv`
    y verificar en `/health` el modelo y thresholds realmente cargados.
 3. Correr `diagnose_prediction.py` sobre el checkpoint actual y revisar:
    clases del checkpoint vs esquema, thresholds, tasa all-negativo y
@@ -114,7 +119,7 @@ python webapp/app.py --saved saved
 
 Si las métricas globales siguen bajas tras migrar, adjuntar:
 
-- `results/.../metrics_global.csv`, `metrics_per_class.csv`,
-  `thresholds_validation.csv`, `challenge_metric/challenge_metric.json`;
+- `eval-resnet/metrics_global.csv`, `metrics_per_class.csv`,
+  `thresholds_validation.csv`, `metrica-challenge/challenge_metric.json`;
 - `saved/.../training_summary.json` (o `history.csv`);
 - salida de `diagnose_prediction.py` para `E00001` y `E00014`.

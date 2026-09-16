@@ -88,48 +88,52 @@ Aplicación Flask tipo dashboard: se sube un ECG, se analiza con el mejor checkp
 
 ### Ejecución
 
-Desde la raíz del proyecto, sin variables de entorno. La opción recomendada deja que la app elija el mejor checkpoint:
+Desde la raíz del proyecto, sin variables de entorno. Defina los checkpoints una vez por terminal:
 
-```sh
-python webapp/app.py --saved saved
+```powershell
+$resnet = Get-ChildItem saved/cinc2020/cinc2020_resnet/*/best.pt | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+$resnet2 = Get-ChildItem saved/cinc2020/cinc2020_resnet_v2*/best.pt | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
 ```
 
-Carpeta específica, host y puerto personalizados:
+Modo ensemble (modelo final recomendado): promedia dos checkpoints con calibración por modelo y usa los umbrales del directorio del ensemble:
 
-```sh
-python webapp/app.py --saved saved/cinc2020 --eval-dir <dir-evaluacion> --exp-dir <dir-experimentos> --uploads <dir-subidas> --results <dir-salidas-web> --host 0.0.0.0 --port 5002
+```powershell
+python webapp/app.py --saved saved --eval-dir ensemble --exp-dir exp-files --model $resnet --model-b $resnet2 --temperatures eval-resnet/temperatures_validation.csv --temperatures-b eval-resnet-v2/temperatures_validation.csv --port 5002
 ```
+
+Abra http://127.0.0.1:5002 y pruebe con `E00001.hea + E00001.mat`.
 
 Con `--eval-dir` la app lee métricas, umbrales, temperaturas y curvas de esa carpeta; con `--exp-dir` lee la comparación de modelos y la robustez. Si se omiten, se buscan automáticamente.
 
-Para una demostración reproducible puede fijar un checkpoint exacto por CLI (la interfaz web no muestra selector de modelo):
+Variantes:
 
-```sh
-python webapp/app.py --model saved/cinc2020/cinc2020_resnet/<run>/best.pt
+```powershell
+python webapp/app.py --saved saved
 ```
 
-Si los umbrales calibrados están en una ruta no estándar, páselos explícitamente:
+Deja que la app elija el mejor checkpoint automáticamente.
 
-```sh
-python webapp/app.py --saved saved --thresholds <umbrales-por-clase.csv>
+```powershell
+python webapp/app.py --saved saved --eval-dir eval-resnet-v2 --model $resnet2
 ```
 
-Modo ensemble (modelo final recomendado): promedia dos checkpoints con calibración por modelo
-y usa los umbrales del directorio del ensemble:
+Un solo modelo (v2) con sus umbrales calibrados.
 
-```sh
-python webapp/app.py --eval-dir <dir-ensemble> --model <mejor-a.pt> --model-b <mejor-b.pt> --alpha 0.5 --temperatures <temperaturas-a>.csv --temperatures-b <temperaturas-b>.csv
+```powershell
+python webapp/app.py --saved saved --thresholds eval-resnet-v2/thresholds_validation.csv
 ```
+
+Si los umbrales calibrados están en una ruta no estándar, páselos explícitamente.
 
 Para demos puede dejar activo el fallback normal: si ninguna clase supera su umbral y `P(NSR) >= 0.40`, la salida final añade `NSR` como postprocesamiento explícito (no cambia probabilidades ni pesos). Para desactivarlo:
 
-```sh
+```powershell
 python webapp/app.py --saved saved --normal-fallback-min-prob 0
 ```
 
 Opcionalmente, entrada WSGI:
 
-```sh
+```powershell
 python webapp/wsgi.py --saved saved
 ```
 

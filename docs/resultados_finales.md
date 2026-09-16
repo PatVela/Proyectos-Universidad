@@ -68,7 +68,7 @@
 **Ensemble v1+v2** (promedio simple, temperaturas por modelo, umbrales F0.5): mejor precisión
 (0.824), discriminación (AUROC 0.951) y F0.5 global, con F1-macro 0.710 (≈ v2).
 ResNet v2 sola queda como mejor modelo individual en F1-macro (0.718). La webapp demuestra
-el ensemble (`--model` + `--model-b` + `--temperatures`/`--temperatures-b` + `--eval-dir <dir-ensemble>`).
+el ensemble (`--model` + `--model-b` + `--temperatures`/`--temperatures-b` + `--eval-dir ensemble`).
 
 ## Artefactos
 

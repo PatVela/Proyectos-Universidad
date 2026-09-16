@@ -4,6 +4,8 @@ dataset2020/
 dataset2020_procesado/
 dataset2020_prueba/
 training2017/
+exp-files/
+metrica-challenge/
 training2017.zip
 .vscode/
 ECG-env/
@@ -12,14 +14,12 @@ results/
 saved/
 data/
 ensemble/
-exp-files/
 ensemble-noexcl/
 eval-resnet/
 eval-resnet-v2/
 eval-resnet-v2-noexcl/
 webapp/uploads/
 webapp/results/
-metrica-challenge/
 logs/
 modelos/
 *.zip
