@@ -14,7 +14,6 @@
   "conv_subsample_lengths": [1, 2, 1, 2],
   "conv_num_skip": 2,
   "conv_dropout": 0.1,
-  "is_regular_conv": false,
   "batch_size": 4,
   "learning_rate": 0.001,
   "min_lr": 0.00005,

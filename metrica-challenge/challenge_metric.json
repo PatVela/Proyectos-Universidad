@@ -1,0 +1,14 @@
+{
+  "challenge_metric": 0.23479020768877382,
+  "observed_score": 4046.8917980630636,
+  "correct_score": 6981.067202380949,
+  "inactive_score": 3146.595357142856,
+  "samples": 6421,
+  "accuracy_exact_match": 0.0417380470331724,
+  "f1_macro_27": 0.30216117671485304,
+  "f1_micro_27": 0.40509438841479184,
+  "uncovered_codes": [],
+  "thresholds_source": "eval-resnet-v2-noexcl/thresholds_validation.csv",
+  "checkpoint": "C:\\Users\\juerg\\Investigacion\\TIF-Biomedica\\saved\\cinc2020\\cinc2020_resnet_v2\\1789503299-039\\best.pt",
+  "test_h5": "data/cinc2020_12/test.h5"
+}

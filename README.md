@@ -65,6 +65,7 @@
     <li><a href="#estructura-del-proyecto">Estructura del proyecto</a></li>
     <li><a href="#aplicación-web">Aplicación web</a></li>
     <li><a href="#experimentos">Experimentos</a></li>
+    <li><a href="#pruebas-y-despliegue">Pruebas y despliegue</a></li>
     <li><a href="#diferencias-frente-a-hannun-et-al">Diferencias frente a Hannun et al.</a></li>
     <li><a href="#roadmap">Roadmap</a></li>
     <li><a href="#contribuir">Contribuir</a></li>
@@ -153,25 +154,28 @@ Pipeline completo, en orden:
      --workers 6 --chunksize 8 --write_batch_size 32
    ```
    Cada HDF5 contiene `signals → (N, 5000, 12)` y `labels → (N, 12)`. En `train`, los registros largos aportan hasta 4 ventanas de 10 s; validación y test usan una ventana centrada.
-3. **Entrenar ResNet-34 tipo Hannun**:
+3. **Entrenar ResNet-34 v1** (receta base):
    ```sh
    python -m ecg.train examples/cinc2020/config.json -e cinc2020_resnet
    ```
-4. **Entrenar CNN convencional equivalente** (mismo calendario de convoluciones, sin residuales):
+4. **Entrenar ResNet-34 v2** (aumentación, label smoothing, selección por F1-macro):
    ```sh
-   python -m ecg.train examples/cinc2020/config_regular_cnn.json -e cinc2020_cnn
+   python -m ecg.train examples/cinc2020/config_resnet_v2.json -e cinc2020_resnet_v2
    ```
-5. **Evaluar** (umbrales optimizados en validación, aplicados a test):
+5. **Calibrar y evaluar** (temperature scaling + umbrales F0.5 en validación, métricas en test):
    ```sh
-   python examples/cinc2020/evaluate.py \
-     examples/cinc2020/config.json \
-     saved/cinc2020/cinc2020_resnet/<run>/best.pt \
-     --output-dir <dir-evaluacion>
+   python examples/cinc2020/calibrate.py --checkpoint <mejor-v1.pt> --val-h5 data/cinc2020_12/val.h5 --output-dir <dir-evaluacion>
+   python examples/cinc2020/evaluate.py examples/cinc2020/config.json <mejor-v1.pt> --output-dir <dir-evaluacion> --temperatures <dir-evaluacion>/temperatures_validation.csv --threshold-beta 0.5
    ```
-   El directorio de salida contendrá umbrales por clase, métricas por clase y globales, predicciones de validación/test, matrices de confusión 2×2 y un resumen JSON.
-6. **Abrir la aplicación web**:
+   El directorio de salida contendrá umbrales por clase, métricas por clase y globales, predicciones de validación/test, matrices de confusión 2×2, curvas ROC/PR y un resumen JSON.
+6. **Ensemble y comparación** (promedio v1+v2, mismo layout de salida):
    ```sh
-   python webapp/app.py --saved saved
+   python examples/cinc2020/ensemble_evaluate.py examples/cinc2020/config.json <mejor-v1.pt> <mejor-v2.pt> --output-dir <dir-ensemble> --threshold-beta 0.5 --temperatures-a <temperaturas-a>.csv --temperatures-b <temperaturas-b>.csv
+   python examples/cinc2020/compare_models.py --eval-a <dir-eval-a> --eval-b <dir-eval-b> --output <comparacion.csv>
+   ```
+7. **Abrir la aplicación web** (predice con el ensemble final):
+   ```sh
+   python webapp/app.py --saved saved --eval-dir <dir-ensemble> --model <mejor-v1.pt> --model-b <mejor-v2.pt> --temperatures <temperaturas-a>.csv --temperatures-b <temperaturas-b>.csv
    ```
 
 _Más ejemplos y comandos avanzados en [examples/cinc2020/README.md](examples/cinc2020/README.md) y [webapp/README.md](webapp/README.md)._
@@ -213,7 +217,7 @@ Notas:
 .
 ├── ecg/                    # paquete: carga, red, entrenamiento e inferencia
 │   ├── load.py             # lectores ECG, normalización y mapeo SNOMED
-│   ├── network.py          # ResNet-34 tipo Hannun y CNN convencional
+│   ├── network.py          # ResNet-34 tipo Hannun
 │   ├── predict.py          # inferencia desde checkpoints (CSV/HDF5)
 │   ├── train.py            # entrenamiento + logs reproducibles
 │   └── util.py             # checkpoints, parámetros y seeds
@@ -221,7 +225,7 @@ Notas:
 │   ├── build_datasets.py / evaluate.py / compare_models.py
 │   ├── robustness.py / challenge_score.py
 │   ├── diagnose_prediction.py / debug_record_prediction.py
-│   ├── config*.json        # configs ResNet, CNN y sintético
+│   ├── config*.json        # configs ResNet, ResNet v2 y sintético
 │   └── official/           # scripts y tablas oficiales del Challenge 2020
 ├── webapp/                 # dashboard Flask + informe PDF
 │   ├── app.py / prediction.py / report_pdf.py / wsgi.py
@@ -253,12 +257,30 @@ Detalles, formatos y endpoints en [webapp/README.md](webapp/README.md).
 ## Experimentos
 
 * **Evaluación multilabel**: AUROC/AUPRC por clase, sensibilidad, especificidad, F1 macro/micro y matrices 2×2 (`evaluate.py`).
-* **Comparación arquitectónica**: ResNet-34 vs CNN convencional con idéntico dataset, split y métricas (`compare_models.py`).
+* **Calibración**: temperature scaling por clase + umbrales F-beta orientados a precisión (`calibrate.py`).
+* **Ensemble**: promedio ponderado de dos checkpoints con calibración por modelo (`ensemble_evaluate.py`).
+* **Comparación de evaluaciones**: dos runs (p. ej. ResNet v1 vs v2) con idéntico dataset, split y métricas (`compare_models.py`).
 * **Robustez controlada**: ruido gaussiano, baseline wander, escalado de amplitud y apagado de derivaciones (`robustness.py`).
 * **Métrica oficial estilo Challenge 2020** sobre los 27 códigos puntuados (`challenge_score.py`).
 * **Diagnóstico por registro**: inspección de casos individuales (`diagnose_prediction.py`, `debug_record_prediction.py`).
 
 Los resultados se visualizan automáticamente en la webapp. Comandos en [examples/cinc2020/README.md](examples/cinc2020/README.md) y diseño experimental en [docs/experimentos_cinc2020.md](docs/experimentos_cinc2020.md).
+
+<p align="right">(<a href="#readme-top">volver arriba</a>)</p>
+
+<!-- TESTING -->
+## Pruebas y despliegue
+
+```sh
+pytest tests/ -q
+```
+
+```sh
+docker build -t ecg-cinc2020 .
+docker run --rm -p 5002:5002 -v ./saved:/app/saved:ro ecg-cinc2020
+```
+
+Monte su carpeta local `saved/` con el checkpoint entrenado.
 
 <p align="right">(<a href="#readme-top">volver arriba</a>)</p>
 
@@ -280,10 +302,21 @@ Los resultados se visualizan automáticamente en la webapp. Comandos en [example
 - [x] Preprocesamiento en unidades físicas (mV + pasa-banda)
 - [x] Precarga de HDF5 a RAM para entrenamiento y evaluación
 - [x] Webapp con informe PDF profesional y secciones ES/EN
-- [x] Experimentos de comparación arquitectónica y robustez
-- [ ] Calibración de probabilidades (temperature scaling)
-- [ ] Exportación a ONNX para inferencia ligera
-- [ ] Curvas ROC/PR interactivas en la webapp
+- [x] Experimentos de comparación de evaluaciones y robustez
+- [x] Ensemble promedio de checkpoints + inferencia ensemble en la webapp
+- [x] Umbrales F-beta y selección de checkpoint por F1-macro
+- [x] Calibración de probabilidades (temperature scaling por clase + reporte ECE/Brier)
+- [x] Curvas ROC/PR por clase en CSV + gráficas interactivas Plotly en la webapp
+- [x] Análisis de errores por subconjunto de origen (sesgo por hospital)
+- [x] Exportación a ONNX verificada numéricamente contra PyTorch
+- [x] Historial de análisis por sesión en la webapp
+- [x] Suite de tests automatizados + Dockerfile CPU
+- [ ] Entrenamiento distribuido multi-GPU
+- [ ] Búsqueda de hiperparámetros con Optuna
+- [ ] Tracking de experimentos con MLflow
+- [ ] Informe comparativo multi-registro (lotes de ECG)
+- [x] Aumentación de datos específica para ECG
+- [ ] Evaluar migración de la webapp a Flet (quizás; habilitaría empaquetado móvil)
 
 Ver los [issues abiertos](https://github.com/PatVela/Proyectos-Universidad/issues) para la lista completa de propuestas y problemas conocidos.
 

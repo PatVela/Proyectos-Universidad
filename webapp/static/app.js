@@ -78,16 +78,16 @@ const I18N = {
     "metric.precisionMacro": "Precisión macro",
     "metric.sensitivityMacro": "Sensibilidad macro",
     "exp.title": "Experimentos",
-    "exp.sub": "Comparación arquitectónica y robustez con perturbaciones controladas.",
-    "exp.method": "Objetivo experimental: comparar de forma justa la red residual frente a una CNN convencional equivalente usando el mismo dataset, split, preprocesamiento, entrenamiento y métricas; y medir robustez ante degradaciones controladas de la señal.",
-    "exp.compare": "ResNet-34 vs CNN convencional",
+    "exp.sub": "Comparación de evaluaciones y robustez con perturbaciones controladas.",
+    "exp.method": "Objetivo experimental: comparar de forma justa dos evaluaciones (por ejemplo, ResNet v1 frente a ResNet v2) usando el mismo dataset, split y métricas; y medir robustez ante degradaciones controladas de la señal.",
+    "exp.compare": "Comparación de modelos",
     "exp.pending": "Resultado pendiente.",
     "exp.compareCmd": "Genere primero métricas para ambos modelos y luego compare:",
     "exp.robust": "Robustez frente a perturbaciones ECG",
     "exp.robustCmd": "Ejecute el experimento reproducible de robustez:",
     "exp.perturbation": "Perturbación",
     "exp.level": "Nivel",
-    "exp.compareNote": "Comparación justa: mismo dataset, split, preprocesamiento y métricas para ambas arquitecturas. La estrella marca el mejor F1 macro en test.",
+    "exp.compareNote": "Comparación justa: mismo dataset, split, preprocesamiento y métricas para ambas evaluaciones. La estrella marca el mejor F1 macro en test.",
     "exp.robustNote": "Cada fila aplica una degradación controlada al test y mide cuánto cae el F1 macro frente a la señal limpia.",
     "exp.deltaCol": "ΔF1 vs limpio",
     "exp.biggestDrop": "Mayor caída vs señal limpia",
@@ -148,6 +148,28 @@ const I18N = {
     "prob.state": "Estado",
     "prob.yes": "Positiva",
     "prob.no": "Negativa",
+    "detail.barsTitle": "Métricas por clase (interactivo)",
+    "curves.title": "Curvas ROC/PR interactivas",
+    "curves.hint": "Seleccione una clase para ver sus curvas ROC y Precision-Recall en test.",
+    "curves.selectClass": "Clase",
+    "curves.pending": "Las curvas se generan automáticamente al ejecutar la evaluación (ver Detalle Técnico › Métricas).",
+    "curves.roc": "Curva ROC",
+    "curves.pr": "Curva Precision-Recall",
+    "curves.fpr": "Tasa falsos positivos",
+    "curves.tpr": "Tasa verdaderos positivos",
+    "curves.precision": "Precisión",
+    "curves.recall": "Recall",
+    "curves.noData": "Sin curvas disponibles.",
+    "bars.f1": "F1",
+    "bars.auroc": "AUROC",
+    "bars.title": "F1 y AUROC por clase (test)",
+    "history.title": "Historial de sesión",
+    "history.empty": "Aún no hay análisis en esta sesión.",
+    "history.clear": "Limpiar historial",
+    "history.positives": "Positivos",
+    "history.none": "Sin positivos",
+    "history.pdf": "PDF",
+    "history.csv": "CSV",
   },
   en: {
     "app.title": "ECG Classifier",
@@ -225,16 +247,16 @@ const I18N = {
     "metric.precisionMacro": "Macro precision",
     "metric.sensitivityMacro": "Macro sensitivity",
     "exp.title": "Experiments",
-    "exp.sub": "Architecture comparison and robustness under controlled perturbations.",
-    "exp.method": "Experimental goal: fairly compare the residual network against an equivalent conventional CNN using the same dataset, split, preprocessing, training setup and metrics; and measure robustness under controlled signal degradations.",
-    "exp.compare": "ResNet-34 vs conventional CNN",
+    "exp.sub": "Evaluation comparison and robustness under controlled perturbations.",
+    "exp.method": "Experimental goal: fairly compare two evaluations (e.g. ResNet v1 vs ResNet v2) using the same dataset, split and metrics; and measure robustness under controlled signal degradations.",
+    "exp.compare": "Model comparison",
     "exp.pending": "Result pending.",
     "exp.compareCmd": "Generate metrics for both models first, then compare:",
     "exp.robust": "Robustness to ECG perturbations",
     "exp.robustCmd": "Run the reproducible robustness experiment:",
     "exp.perturbation": "Perturbation",
     "exp.level": "Level",
-    "exp.compareNote": "Fair comparison: same dataset, split, preprocessing and metrics for both architectures. The star marks the best test macro F1.",
+    "exp.compareNote": "Fair comparison: same dataset, split, preprocessing and metrics for both evaluations. The star marks the best test macro F1.",
     "exp.robustNote": "Each row applies a controlled degradation to the test set and measures how much macro F1 drops versus the clean signal.",
     "exp.deltaCol": "ΔF1 vs clean",
     "exp.biggestDrop": "Largest drop vs clean signal",
@@ -295,6 +317,28 @@ const I18N = {
     "prob.state": "State",
     "prob.yes": "Positive",
     "prob.no": "Negative",
+    "detail.barsTitle": "Per-class metrics (interactive)",
+    "curves.title": "Interactive ROC/PR curves",
+    "curves.hint": "Select a class to view its ROC and Precision-Recall curves on test.",
+    "curves.selectClass": "Class",
+    "curves.pending": "Curves are generated automatically when running evaluation (see Technical Detail › Metrics).",
+    "curves.roc": "ROC curve",
+    "curves.pr": "Precision-Recall curve",
+    "curves.fpr": "False positive rate",
+    "curves.tpr": "True positive rate",
+    "curves.precision": "Precision",
+    "curves.recall": "Recall",
+    "curves.noData": "No curves available.",
+    "bars.f1": "F1",
+    "bars.auroc": "AUROC",
+    "bars.title": "F1 and AUROC per class (test)",
+    "history.title": "Session history",
+    "history.empty": "No analyses yet in this session.",
+    "history.clear": "Clear history",
+    "history.positives": "Positives",
+    "history.none": "No positives",
+    "history.pdf": "PDF",
+    "history.csv": "CSV",
   },
 };
 
@@ -317,6 +361,7 @@ function applyI18n() {
   if (es) es.classList.toggle("active", LANG === "es");
   if (en) en.classList.toggle("active", LANG === "en");
   refreshFileCard();
+  if (typeof renderHistory === "function") renderHistory();
   if (lastResult) render(lastResult, false);
 }
 
@@ -444,6 +489,8 @@ function goTo(sec) {
     const el = $("sec-" + s);
     if (el) el.hidden = (s !== sec);
   });
+  if (sec === "det" && typeof loadMetricBars === "function") loadMetricBars();
+  if (sec === "exp" && typeof loadCurves === "function") loadCurves();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
@@ -733,6 +780,7 @@ function renderTechnical(result) {
     row("Val loss", result.checkpoint_val_loss),
     row("Threshold", result.using_class_thresholds ? (LANG === "es" ? "calibrado por clase" : "class-calibrated") : result.threshold),
     row(LANG === "es" ? "Fuente de umbrales" : "Threshold source", baseName(result.threshold_source)),
+    row(LANG === "es" ? "Calibración" : "Calibration", result.calibrated ? `${LANG === "es" ? "temperature scaling por clase" : "per-class temperature scaling"} (${baseName(result.temperature_source)})` : (LANG === "es" ? "sin calibrar" : "uncalibrated")),
     row(LANG === "es" ? "Shape procesado" : "Processed shape", Array.isArray(result.processed_shape) ? result.processed_shape.join(" × ") : result.processed_shape),
     row(LANG === "es" ? "Frecuencia original" : "Original sampling rate", result.original_sampling_rate ? `${result.original_sampling_rate} Hz` : "—"),
     row(LANG === "es" ? "Frecuencia objetivo" : "Target sampling rate", result.target_sampling_rate ? `${result.target_sampling_rate} Hz` : "—"),
@@ -793,6 +841,146 @@ function render(result, updateModel = true) {
   renderPlot(result);
   renderButtons(result);
   renderTechnical(result);
+  saveHistory(result);
+  renderHistory();
 }
+
+// ============================================================ charts ======
+let barsLoaded = false;
+let curvesCache = null;
+
+function plotFontColor() {
+  return document.documentElement.dataset.theme === "dark" ? "#e2e8f0" : "#1e293b";
+}
+
+function plotlyAvailable() {
+  return typeof Plotly !== "undefined";
+}
+
+async function loadMetricBars() {
+  const box = $("metricBars");
+  if (!box || barsLoaded) return;
+  barsLoaded = true;
+  if (!plotlyAvailable()) {
+    box.innerHTML = `<p class="hint muted">Plotly no disponible.</p>`;
+    return;
+  }
+  try {
+    const resp = await fetch("/metrics");
+    const data = await resp.json();
+    const rows = (data && data.per_class_test) || [];
+    if (!rows.length) {
+      box.innerHTML = `<p class="hint muted">${escapeHtml(tr("curves.noData"))}</p>`;
+      return;
+    }
+    const x = rows.map(r => r.class);
+    const f1 = rows.map(r => Number(r.f1));
+    const auroc = rows.map(r => (r.auroc === null || r.auroc === undefined) ? NaN : Number(r.auroc));
+    const font = { color: plotFontColor(), size: 11 };
+    Plotly.newPlot(box, [
+      { x, y: f1, name: tr("bars.f1"), type: "bar", marker: { color: "#2563eb" } },
+      { x, y: auroc, name: tr("bars.auroc"), type: "bar", marker: { color: "#16a34a" } },
+    ], {
+      title: { text: tr("bars.title"), font: { ...font, size: 13 } },
+      barmode: "group", height: 340, margin: { t: 50, b: 110 },
+      paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+      font, xaxis: { tickangle: -30 }, yaxis: { range: [0, 1] },
+    }, { responsive: true, displaylogo: false });
+  } catch (err) {
+    box.innerHTML = `<p class="hint muted">${escapeHtml(tr("curves.noData"))}</p>`;
+  }
+}
+
+async function loadCurves() {
+  const sel = $("curveClass");
+  if (!sel) return;
+  if (curvesCache) {
+    if (sel.value) drawClassCurves(sel.value);
+    return;
+  }
+  if (!plotlyAvailable()) return;
+  try {
+    const resp = await fetch("/curves");
+    const data = await resp.json();
+    if (!data || !data.found) return;
+    curvesCache = data;
+    sel.innerHTML = data.classes.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
+    sel.onchange = () => drawClassCurves(sel.value);
+    if (data.classes.length) drawClassCurves(data.classes[0]);
+  } catch (err) { /* la sección queda con placeholders */ }
+}
+
+function drawClassCurves(cls) {
+  if (!curvesCache || !plotlyAvailable()) return;
+  const curve = curvesCache.curves[cls];
+  const rocBox = $("rocPlot");
+  const prBox = $("prPlot");
+  if (!curve || !rocBox || !prBox) return;
+  const font = { color: plotFontColor(), size: 11 };
+  const base = { height: 320, margin: { t: 50, r: 20 }, paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)", font, showlegend: false };
+  if (curve.fpr && curve.tpr) {
+    Plotly.newPlot(rocBox, [
+      { x: curve.fpr, y: curve.tpr, type: "scatter", mode: "lines", line: { color: "#2563eb", width: 2.5 } },
+      { x: [0, 1], y: [0, 1], type: "scatter", mode: "lines", line: { color: "#94a3b8", dash: "dash" } },
+    ], { ...base, title: { text: `${tr("curves.roc")} · ${cls}`, font: { ...font, size: 13 } },
+        xaxis: { title: tr("curves.fpr"), range: [0, 1] }, yaxis: { title: tr("curves.tpr"), range: [0, 1] } },
+      { responsive: true, displaylogo: false });
+  }
+  if (curve.precision && curve.recall) {
+    Plotly.newPlot(prBox, [
+      { x: curve.recall, y: curve.precision, type: "scatter", mode: "lines", line: { color: "#dc2626", width: 2.5 } },
+    ], { ...base, title: { text: `${tr("curves.pr")} · ${cls}`, font: { ...font, size: 13 } },
+        xaxis: { title: tr("curves.recall"), range: [0, 1] }, yaxis: { title: tr("curves.precision"), range: [0, 1] } },
+      { responsive: true, displaylogo: false });
+  }
+}
+
+// ============================================================ history =====
+const HISTORY_KEY = "ecg-history";
+const HISTORY_MAX = 20;
+
+function getHistory() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+    return Array.isArray(raw) ? raw : [];
+  } catch (e) { return []; }
+}
+
+function saveHistory(result) {
+  if (!result || !result.record_name) return;
+  const positives = (result.positive_predictions || []).map(p => ({ c: p.class, p: Number(Number(p.probability).toFixed(4)) }));
+  const sig = JSON.stringify({ r: result.record_name, p: positives });
+  const entry = { ts: Date.now(), record: result.record_name, positives,
+    pdf: result.pdf_url || null, csv: result.converted_csv_url || null };
+  const rest = getHistory().filter(e => JSON.stringify({ r: e.record, p: e.positives }) !== sig);
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify([entry, ...rest].slice(0, HISTORY_MAX))); } catch (e) {}
+}
+
+function renderHistory() {
+  const box = $("historyBox");
+  if (!box) return;
+  const items = getHistory();
+  if (!items.length) {
+    box.innerHTML = `<p class="hint muted">${escapeHtml(tr("history.empty"))}</p>`;
+    return;
+  }
+  box.innerHTML = items.map(e => {
+    const when = new Date(e.ts).toLocaleString(LANG === "es" ? "es-ES" : "en-US");
+    const pos = (e.positives && e.positives.length)
+      ? e.positives.map(p => `${escapeHtml(p.c)} ${(Number(p.p) * 100).toFixed(1)}%`).join(", ")
+      : escapeHtml(tr("history.none"));
+    const links = `${e.pdf ? `<a href="${escapeHtml(e.pdf)}" download>${escapeHtml(tr("history.pdf"))}</a>` : ""}${e.csv ? ` <a href="${escapeHtml(e.csv)}" download>${escapeHtml(tr("history.csv"))}</a>` : ""}`;
+    return `<div class="history-item"><strong>${escapeHtml(e.record)}</strong><span>${escapeHtml(tr("history.positives"))}: ${pos}</span><time>${escapeHtml(when)}</time><span class="h-links">${links}</span></div>`;
+  }).join("");
+}
+
+(function initHistory() {
+  const btn = $("btnClearHistory");
+  if (btn) btn.addEventListener("click", () => {
+    try { localStorage.removeItem(HISTORY_KEY); } catch (e) {}
+    renderHistory();
+  });
+  renderHistory();
+})();
 
 applyI18n();

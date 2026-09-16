@@ -73,6 +73,9 @@ Aplicación Flask tipo dashboard: se sube un ECG, se analiza con el mejor checkp
 * Comparación con etiquetas reales: automática desde `Dx` (WFDB) o manual para CSV (clases o SNOMED).
 * Ficha técnica del registro y del modelo, esquema SNOMED-CT y métricas exportadas.
 * Secciones de comparación arquitectónica y robustez alimentadas por los experimentos.
+* Gráficas interactivas de métricas y curvas ROC/PR por clase (Plotly).
+* Historial de análisis de la sesión con re-descarga de artefactos.
+* Temperature scaling automático si existe calibración previa.
 * Interfaz bilingüe ES/EN y tema claro/oscuro persistentes.
 
 <p align="right">(<a href="#readme-top">volver arriba</a>)</p>
@@ -97,11 +100,15 @@ Carpeta específica, host y puerto personalizados:
 ```sh
 python webapp/app.py \
   --saved saved/cinc2020 \
+  --eval-dir <dir-evaluacion> \
+  --exp-dir <dir-experimentos> \
   --uploads <dir-subidas> \
   --results <dir-salidas-web> \
   --host 0.0.0.0 \
   --port 5002
 ```
+
+Con `--eval-dir` la app lee métricas, umbrales, temperaturas y curvas de esa carpeta; con `--exp-dir` lee la comparación de modelos y la robustez. Si se omiten, se buscan automáticamente.
 
 Para una demostración reproducible puede fijar un checkpoint exacto por CLI (la interfaz web no muestra selector de modelo):
 
@@ -115,6 +122,19 @@ Si los umbrales calibrados están en una ruta no estándar, páselos explícitam
 python webapp/app.py \
   --saved saved \
   --thresholds <umbrales-por-clase.csv>
+```
+
+Modo ensemble (modelo final recomendado): promedia dos checkpoints con calibración por modelo
+y usa los umbrales del directorio del ensemble:
+
+```sh
+python webapp/app.py \
+  --eval-dir <dir-ensemble> \
+  --model <mejor-a.pt> \
+  --model-b <mejor-b.pt> \
+  --alpha 0.5 \
+  --temperatures <temperaturas-a>.csv \
+  --temperatures-b <temperaturas-b>.csv
 ```
 
 Para demos puede dejar activo el fallback normal: si ninguna clase supera su umbral y `P(NSR) >= 0.40`, la salida final añade `NSR` como postprocesamiento explícito (no cambia probabilidades ni pesos). Para desactivarlo:
@@ -169,11 +189,12 @@ La app valida que el stem coincida, lee el header, preprocesa la señal, compara
 | `GET` | `/models` | Checkpoints disponibles en la carpeta configurada |
 | `GET` | `/metrics` | Métricas de evaluación en JSON (si existen) |
 | `GET` | `/experiments` | Comparación y robustez en JSON (si existen) |
-| `GET` | `/health` | Estado del modelo cargado |
+| `GET` | `/curves?split=test` | Curvas ROC/PR por clase en JSON (si existen) |
+| `GET` | `/health` | Estado del modelo, umbrales y calibración |
 
 ### Cómo se llenan las secciones de métricas y experimentos
 
-Ejecute el pipeline de evaluación y experimentos (ver [examples/cinc2020/README.md](../examples/cinc2020/README.md#uso)); la webapp detecta automáticamente los CSV generados y completa las tablas, resúmenes de mejor/peor clase, ganador arquitectónico y caídas de robustez. La evaluación también calibra los umbrales por clase que la app usa en lugar del respaldo global 0.5.
+Ejecute el pipeline de evaluación y experimentos (ver [examples/cinc2020/README.md](../examples/cinc2020/README.md#uso)); la webapp detecta automáticamente los CSV generados y completa las tablas, resúmenes de mejor/peor clase, ganador arquitectónico y caídas de robustez. La evaluación también calibra los umbrales por clase que la app usa en lugar del respaldo global 0.5, y exporta las curvas ROC/PR que alimentan los gráficos interactivos. Si existe calibración previa (`calibrate.py`), la app aplica temperature scaling automáticamente. Si sus carpetas tienen otros nombres, indíquelas con `--eval-dir` y `--exp-dir` (ver Ejecución).
 
 <p align="right">(<a href="#readme-top">volver arriba</a>)</p>
 
@@ -197,8 +218,15 @@ webapp/
 - [x] Detalle técnico bilingüe con ficha de registro y modelo
 - [x] Métricas, comparación y robustez integradas al dashboard
 - [x] Informe PDF con veredicto y gráfico de probabilidades
-- [ ] Gráficas interactivas de métricas por clase
-- [ ] Historial de análisis por sesión
+- [x] Gráficas interactivas de métricas por clase (Plotly)
+- [x] Curvas ROC/PR interactivas por clase
+- [x] Historial de análisis por sesión
+- [x] Temperature scaling automático + fila de calibración
+- [x] Inferencia ensemble (dos checkpoints + calibración por modelo)
+- [ ] Comparador lado a lado de dos registros
+- [ ] Exportación del análisis a Excel
+- [ ] Historial persistente en servidor (multi-sesión)
+- [ ] Evaluar migración a Flet (quizás)
 
 Ver los [issues abiertos](https://github.com/PatVela/Proyectos-Universidad/issues) para más propuestas.
 

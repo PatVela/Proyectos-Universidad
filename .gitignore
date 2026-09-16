@@ -11,6 +11,11 @@ resultados/
 results/
 saved/
 data/
+ensemble/
+ensemble-noexcl/
+eval-resnet/
+eval-resnet-v2/
+eval-resnet-v2-noexcl/
 webapp/uploads/
 webapp/results/
 logs/

@@ -18,11 +18,11 @@ python -m ecg.train examples/cinc2020/config.json -e cinc2020_resnet
 python examples/cinc2020/evaluate.py examples/cinc2020/config.json saved/cinc2020/cinc2020_resnet/<run>/best.pt --output-dir results/cinc2020_12_resnet
 ```
 
-## Experimento B — CNN convencional equivalente
+## Experimento B — ResNet-34 v2 (receta anti-sobreajuste)
 
 ```bash
-python -m ecg.train examples/cinc2020/config_regular_cnn.json -e cinc2020_cnn
-python examples/cinc2020/evaluate.py examples/cinc2020/config_regular_cnn.json saved/cinc2020/cinc2020_cnn/<run>/best.pt --output-dir results/cinc2020_12_cnn
+python -m ecg.train examples/cinc2020/config_resnet_v2.json -e cinc2020_resnet_v2
+python examples/cinc2020/evaluate.py examples/cinc2020/config_resnet_v2.json saved/cinc2020/cinc2020_resnet_v2/<run>/best.pt --output-dir <dir-evaluacion-v2> --threshold-beta 0.5
 ```
 
 ## Comparación justa
@@ -38,10 +38,21 @@ Ambos modelos deben usar:
 
 ```bash
 python examples/cinc2020/compare_models.py \
-  --resnet results/cinc2020_12_resnet \
-  --cnn results/cinc2020_12_cnn \
+  --eval-a results/cinc2020_12_resnet \
+  --eval-b <dir-evaluacion-v2> \
+  --label-a "ResNet v1" --label-b "ResNet v2" \
   --output results/cinc2020_12/model_comparison.csv
 ```
+
+## Experimento C — Ensemble v1+v2 (modelo final)
+
+```bash
+python examples/cinc2020/ensemble_evaluate.py examples/cinc2020/config.json <mejor-v1.pt> <mejor-v2.pt> --output-dir <dir-ensemble> --threshold-beta 0.5 --temperatures-a <temperaturas-a>.csv --temperatures-b <temperaturas-b>.csv
+python examples/cinc2020/compare_models.py --eval-a <dir-eval-v2> --eval-b <dir-ensemble> --label-a "ResNet v2" --label-b "Ensemble" --output <comparacion-ensemble.csv>
+```
+
+Promedio simple con calibración por modelo y umbrales F0.5 tuneados sobre el promedio.
+Ver resultados en [resultados_finales.md](resultados_finales.md).
 
 ## Métricas a reportar
 

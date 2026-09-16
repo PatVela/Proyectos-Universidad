@@ -153,6 +153,12 @@
             <svg class="ico"><use href="#i-viz"/></svg><span data-i18n="btn.png">Abrir trazado PNG</span>
           </a>
         </div>
+
+        <h3 class="sec-title"><span class="sec-tag" data-i18n="history.title">Historial de sesión</span></h3>
+        <div id="historyBox" class="history"></div>
+        <div class="btn-row">
+          <button type="button" id="btnClearHistory" class="secondary"><span data-i18n="history.clear">Limpiar historial</span></button>
+        </div>
       </div>
     </section>
 
@@ -238,6 +244,8 @@
         {% if metrics.best_class and metrics.worst_class %}
         <p class="hint muted"><b data-i18n="detail.bestClass">Mejor clase (F1 test)</b>: <code>{{ metrics.best_class.name }} · {{ '%.3f' % metrics.best_class.value }}</code> &middot; <b data-i18n="detail.worstClass">Peor clase (F1 test)</b>: <code>{{ metrics.worst_class.name }} · {{ '%.3f' % metrics.worst_class.value }}</code></p>
         {% endif %}
+        <h3 class="sec-title"><span class="sec-tag" data-i18n="detail.barsTitle">Métricas por clase (interactivo)</span></h3>
+        <div id="metricBars" class="plot-box"></div>
       {% else %}
         <div class="help-box">
           <strong data-i18n="detail.metricsPending">Métricas pendientes.</strong>
@@ -254,11 +262,11 @@
         <p class="panel-sub" data-i18n="exp.sub">Comparación arquitectónica y robustez con perturbaciones controladas.</p>
       </div>
 
-      <div class="method" data-i18n="exp.method">Objetivo experimental: comparar de forma justa la red residual frente a una CNN convencional equivalente usando el mismo dataset, split, preprocesamiento, entrenamiento y métricas; y medir robustez ante degradaciones controladas de la señal.</div>
+      <div class="method" data-i18n="exp.method">Objetivo experimental: comparar de forma justa dos evaluaciones (por ejemplo, ResNet v1 frente a ResNet v2) usando el mismo dataset, split y métricas; y medir robustez ante degradaciones controladas de la señal.</div>
 
-      <h3 class="sec-title"><span class="sec-tag" data-i18n="exp.compare">ResNet-34 vs CNN convencional</span></h3>
+      <h3 class="sec-title"><span class="sec-tag" data-i18n="exp.compare">Comparación de modelos</span></h3>
       {% if experiments and experiments.comparison_found %}
-      <p class="hint muted" data-i18n="exp.compareNote">Comparación justa: mismo dataset, split, preprocesamiento y métricas para ambas arquitecturas. La estrella marca el mejor F1 macro en test.</p>
+      <p class="hint muted" data-i18n="exp.compareNote">Comparación justa: mismo dataset, split, preprocesamiento y métricas para ambas evaluaciones. La estrella marca el mejor F1 macro en test.</p>
       <div class="iv-scroll exp-scroll">
         <table class="iv-table exp-table">
           <thead><tr><th data-i18n="table.model">Modelo</th><th>Split</th><th>n</th><th>F1 macro</th><th>F1 micro</th><th>Sens. macro</th><th>Esp. macro</th><th>AUROC macro</th></tr></thead>
@@ -273,7 +281,7 @@
       <div class="help-box">
         <strong data-i18n="exp.pending">Resultado pendiente.</strong>
         <p data-i18n="exp.compareCmd">Genere primero métricas para ambos modelos y luego compare:</p>
-        <p><code>python examples/cinc2020/compare_models.py --resnet &lt;dir-eval-resnet&gt; --cnn &lt;dir-eval-cnn&gt; --output &lt;comparacion.csv&gt;</code></p>
+        <p><code>python examples/cinc2020/compare_models.py --eval-a &lt;dir-eval-a&gt; --eval-b &lt;dir-eval-b&gt; --output &lt;comparacion.csv&gt;</code></p>
       </div>
       {% endif %}
 
@@ -298,6 +306,24 @@
         <strong data-i18n="exp.pending">Resultado pendiente.</strong>
         <p data-i18n="exp.robustCmd">Ejecute el experimento reproducible de robustez:</p>
         <p><code>python examples/cinc2020/robustness.py saved/cinc2020/cinc2020_resnet/&lt;run&gt;/best.pt data/cinc2020_12/test.h5 --thresholds &lt;umbrales-por-clase.csv&gt; --output &lt;robustez.csv&gt;</code></p>
+      </div>
+      {% endif %}
+
+      <h3 class="sec-title"><span class="sec-tag" data-i18n="curves.title">Curvas ROC/PR interactivas</span></h3>
+      {% if curves_found %}
+      <p class="hint muted" data-i18n="curves.hint">Seleccione una clase para ver sus curvas ROC y Precision-Recall en test.</p>
+      <div class="curve-controls">
+        <label><span data-i18n="curves.selectClass">Clase</span>
+          <select id="curveClass"></select></label>
+      </div>
+      <div class="plot-grid">
+        <div id="rocPlot" class="plot-box"></div>
+        <div id="prPlot" class="plot-box"></div>
+      </div>
+      {% else %}
+      <div class="help-box">
+        <strong data-i18n="exp.pending">Resultado pendiente.</strong>
+        <p data-i18n="curves.pending">Las curvas se generan automáticamente al ejecutar la evaluación (ver Detalle Técnico › Métricas).</p>
       </div>
       {% endif %}
     </section>

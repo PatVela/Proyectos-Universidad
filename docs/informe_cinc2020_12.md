@@ -58,7 +58,7 @@ El split usa `MultilabelStratifiedShuffleSplit`; no hay fallback por fuente.
 Implementación: `ecg/network.py`.
 
 - `ECGResNet34`: ResNet 1D tipo Hannun, 16 bloques residuales, salida de 12 logits.
-- `ECGRegularCNN`: CNN convencional equivalente, mismo calendario de convoluciones y downsampling, sin shortcuts.
+
 
 ## Entrenamiento
 

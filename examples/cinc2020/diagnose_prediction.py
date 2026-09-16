@@ -53,7 +53,7 @@ def check_checkpoint(path: str) -> tuple[dict, list[str]]:
     print(f"Época      : {ckpt.get('epoch')}  val_loss={ckpt.get('val_loss')}")
     print(f"Esquema    : {ckpt.get('label_schema')}")
     print(f"Clases     : {class_names}")
-    print(f"RegularCNN : {(ckpt.get('config') or {}).get('is_regular_conv')}")
+
     siblings = util.list_checkpoints_info(ckpt_path.parent.parent)
     print(f"\nCheckpoints hermanos bajo {ckpt_path.parent.parent} (rank 0 = auto-seleccionado):")
     for row in siblings[:8]:
@@ -100,6 +100,9 @@ def check_hdf5(h5_path: str, label: str) -> dict | None:
 
 
 def calibration_spotcheck(checkpoint_path: str, h5_path: str, thresholds: np.ndarray, device: str, max_n: int = 800) -> None:
+    if int(max_n) <= 0:
+        print("Spot-check de calibración omitido (--max-calibration 0).")
+        return
     import h5py
     import torch
     torch_device = predict.get_device(device)

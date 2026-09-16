@@ -24,6 +24,7 @@ import pandas as pd
 from werkzeug.utils import secure_filename
 
 from ecg import load, util
+from ecg.calibration import apply_temperature
 from ecg.predict import load_model, predict_array, predict_windows, preprocessing_for_checkpoint
 
 
@@ -436,6 +437,27 @@ def threshold_values_for_class_names(
     return arr
 
 
+def temperatures_for_class_names(
+    class_names: list[str],
+    temperatures: dict | list | np.ndarray | None = None,
+) -> np.ndarray | None:
+    """Devuelve vector (C,) de temperaturas o None si no hay calibración."""
+    if temperatures is None:
+        return None
+    if isinstance(temperatures, dict):
+        values = np.ones(len(class_names), dtype=np.float64)
+        for i, name in enumerate(class_names):
+            if name in temperatures:
+                values[i] = float(temperatures[name])
+            elif str(i) in temperatures:
+                values[i] = float(temperatures[str(i)])
+        return values
+    arr = np.asarray(list(temperatures), dtype=np.float64).reshape(-1)
+    if arr.size != len(class_names):
+        raise ValueError(f"temperatures tiene {arr.size} valores; se esperaban {len(class_names)}")
+    return arr
+
+
 def _prediction_rows(probabilities: np.ndarray, class_names: list[str], thresholds: np.ndarray) -> list[dict]:
     rows = []
     for i, prob in enumerate(probabilities):
@@ -502,6 +524,15 @@ def apply_normal_fallback(
     return info
 
 
+def _infer_windows(model, windows: np.ndarray, device) -> tuple[np.ndarray, np.ndarray, str]:
+    """Inferencia por ventanas; devuelve (probabilidades, por_ventana, agregación)."""
+    if windows.shape[0] == 1:
+        probabilities = predict_array(model, windows[0], device=device)
+        return probabilities, probabilities[None, :], "single"
+    probabilities, per_window = predict_windows(model, windows, device=device, aggregate=SLIDING_AGGREGATE)
+    return probabilities, per_window, SLIDING_AGGREGATE
+
+
 def run_prediction_from_saved_paths(
     saved_paths: list[Path],
     model_path: str | None,
@@ -511,7 +542,13 @@ def run_prediction_from_saved_paths(
     reference_labels: str | Iterable[str] | None = None,
     thresholds: dict | list | np.ndarray | None = None,
     threshold_source: str | None = None,
+    temperatures: dict | list | np.ndarray | None = None,
+    temperature_source: str | None = None,
     normal_fallback_min_prob: float | None = 0.40,
+    model_path_b: str | None = None,
+    temperatures_b: dict | list | np.ndarray | None = None,
+    temperature_source_b: str | None = None,
+    alpha: float = 0.5,
 ) -> dict:
     """Predice a partir de archivos ya guardados en disco."""
     result_dir = Path(result_dir)
@@ -527,13 +564,32 @@ def run_prediction_from_saved_paths(
     prepared = prepare_saved_input(saved_paths, result_dir, norm_mode=pre["norm_mode"], bandpass=pre["bandpass"])
 
     windows = np.asarray(prepared.get("processed_windows", prepared["processed_signal"][None, ...]), dtype=np.float32)
-    if windows.shape[0] == 1:
-        probabilities = predict_array(model, windows[0], device=device)
-        per_window = probabilities[None, :]
-        aggregate_used = "single"
-    else:
-        probabilities, per_window = predict_windows(model, windows, device=device, aggregate=SLIDING_AGGREGATE)
-        aggregate_used = SLIDING_AGGREGATE
+    probabilities, per_window, aggregate_used = _infer_windows(model, windows, device)
+    temp_values = temperatures_for_class_names(class_names, temperatures=temperatures)
+    calibrated_a = temp_values is not None
+    if calibrated_a:
+        probabilities = apply_temperature(np.asarray(probabilities)[None, :], temp_values)[0]
+        per_window = apply_temperature(np.asarray(per_window), temp_values)
+
+    is_ensemble = model_path_b is not None and str(model_path_b).strip() != ""
+    resolved_model_b = None
+    temp_values_b = None
+    calibrated_b = False
+    if is_ensemble:
+        from examples.cinc2020.ensemble_evaluate import ensemble_probabilities
+        resolved_model_b = resolve_model_path(model_path=model_path_b, saved_dir=saved_dir)
+        _model_b, _checkpoint_b, class_names_b = load_model(resolved_model_b, device=device)
+        if list(class_names_b) != list(class_names):
+            raise ValueError("Los checkpoints del ensemble usan distinto orden de clases.")
+        probabilities_b, per_window_b, _ = _infer_windows(_model_b, windows, device)
+        temp_values_b = temperatures_for_class_names(class_names, temperatures=temperatures_b)
+        calibrated_b = temp_values_b is not None
+        if calibrated_b:
+            probabilities_b = apply_temperature(np.asarray(probabilities_b)[None, :], temp_values_b)[0]
+            per_window_b = apply_temperature(np.asarray(per_window_b), temp_values_b)
+        probabilities = ensemble_probabilities(probabilities, probabilities_b, alpha).astype(np.float32)
+        per_window = ensemble_probabilities(np.asarray(per_window), np.asarray(per_window_b), alpha).astype(np.float32)
+    calibrated = calibrated_a or calibrated_b
     threshold_values = threshold_values_for_class_names(class_names, threshold=threshold, thresholds=thresholds)
     rows = _prediction_rows(probabilities, class_names, threshold_values)
     raw_sorted_rows = sorted(rows, key=lambda item: item["probability"], reverse=True)
@@ -579,13 +635,21 @@ def run_prediction_from_saved_paths(
         "input_type": prepared["input_type"],
         "source_files": prepared["source_files"],
         "model_path": str(resolved_model),
+        "model_path_b": str(resolved_model_b) if resolved_model_b is not None else None,
+        "ensemble": bool(is_ensemble),
+        "ensemble_alpha": float(alpha) if is_ensemble else None,
         "checkpoint_epoch": checkpoint.get("epoch"),
         "checkpoint_val_loss": checkpoint.get("val_loss"),
-        "model_type": "CNN convencional equivalente" if checkpoint.get("config", {}).get("is_regular_conv") else "ResNet-34 1D tipo Hannun",
+        "model_type": f"Ensemble ResNet-34 ×2 (α={float(alpha):.2f})" if is_ensemble else "ResNet-34 1D tipo Hannun",
         "threshold": float(threshold),
         "thresholds": threshold_values.tolist(),
         "threshold_source": threshold_source or "fallback_global_0.5",
         "using_class_thresholds": bool(using_class_thresholds),
+        "temperatures": temp_values.tolist() if calibrated_a else None,
+        "temperature_source": temperature_source if calibrated_a else None,
+        "temperatures_b": temp_values_b.tolist() if calibrated_b else None,
+        "temperature_source_b": temperature_source_b if calibrated_b else None,
+        "calibrated": bool(calibrated),
         "num_classes": load.NUM_CLASSES,
         "num_leads": load.NUM_LEADS,
         "target_sampling_rate": load.TARGET_FS,
@@ -632,6 +696,14 @@ def run_prediction_from_saved_paths(
                 if using_class_thresholds else f"probabilidad >= {threshold}"
             ),
             "threshold_source": threshold_source or "fallback_global_0.5",
+            "calibration": (
+                "temperature scaling por clase"
+                if calibrated else "sin calibrar (probabilidades directas del modelo)"
+            ),
+            "ensemble": (
+                f"promedio ponderado α={float(alpha):.2f} de 2 checkpoints"
+                if is_ensemble else "no (checkpoint único)"
+            ),
             "device": str(device),
             "plot_style": "papel milimetrado ECG",
         },
@@ -649,7 +721,13 @@ def run_prediction_from_uploads(
     reference_labels: str | Iterable[str] | None = None,
     thresholds: dict | list | np.ndarray | None = None,
     threshold_source: str | None = None,
+    temperatures: dict | list | np.ndarray | None = None,
+    temperature_source: str | None = None,
     normal_fallback_min_prob: float | None = 0.40,
+    model_path_b: str | None = None,
+    temperatures_b: dict | list | np.ndarray | None = None,
+    temperature_source_b: str | None = None,
+    alpha: float = 0.5,
 ) -> dict:
     """Guarda archivos subidos, convierte si aplica y ejecuta inferencia."""
     job_id = uuid.uuid4().hex[:12]
@@ -665,7 +743,13 @@ def run_prediction_from_uploads(
         reference_labels=reference_labels,
         thresholds=thresholds,
         threshold_source=threshold_source,
+        temperatures=temperatures,
+        temperature_source=temperature_source,
         normal_fallback_min_prob=normal_fallback_min_prob,
+        model_path_b=model_path_b,
+        temperatures_b=temperatures_b,
+        temperature_source_b=temperature_source_b,
+        alpha=alpha,
     )
     result["job_id"] = job_id
     return result

@@ -275,3 +275,20 @@ button:disabled { opacity: .55; cursor: not-allowed; transform: none; filter: no
 /* Resaltados dentro de tablas de detalle y experimentos */
 .iv-table .badge { margin-left: .35rem; }
 .iv-table td .badge.ok { white-space: nowrap; }
+
+/* Gráficos Plotly y controles de curvas */
+.plot-box { min-height: 300px; }
+.plot-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.curve-controls { margin: .5rem 0 1rem; }
+.curve-controls label { display: inline-flex; align-items: center; gap: .5rem; font-size: .9rem; }
+.curve-controls select { font: inherit; padding: .3rem .5rem; border-radius: .4rem; border: 1px solid var(--border); background: var(--panel); color: inherit; }
+
+/* Historial de sesión */
+.history { display: flex; flex-direction: column; gap: .4rem; margin-top: .5rem; }
+.history-item { display: flex; flex-wrap: wrap; gap: .3rem .8rem; align-items: baseline; border: 1px solid var(--border); border-radius: .5rem; padding: .45rem .7rem; font-size: .85rem; }
+.history-item time { color: var(--muted); font-size: .75rem; }
+.history-item .h-links { margin-left: auto; display: inline-flex; gap: .6rem; }
+
+@media (max-width: 900px) {
+  .plot-grid { grid-template-columns: 1fr; }
+}

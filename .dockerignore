@@ -1,0 +1,13 @@
+.git/
+__pycache__/
+*.pyc
+.venv/
+results/
+data/
+dataset2020/
+training/
+saved/
+webapp/uploads/
+webapp/results/
+images/
+*.pdf

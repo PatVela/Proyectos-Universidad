@@ -3,7 +3,6 @@
 Uso recomendado::
 
     python -m ecg.train examples/cinc2020/config.json --experiment cinc2020_resnet
-    python -m ecg.train examples/cinc2020/config_regular_cnn.json --experiment cinc2020_cnn
 
 La formulación es multilabel: el modelo produce logits y se entrena con
 ``BCEWithLogitsLoss``. No se usa softmax ni argmax.
@@ -42,10 +41,13 @@ class HDF5ECGDataset(Dataset):
     """
 
     def __init__(self, h5_path: str | Path, expected_num_classes: int = load.NUM_CLASSES,
-                 preload: bool = True, max_preload_gb: float = 16):
+                 preload: bool = True, max_preload_gb: float = 16,
+                 augment_cfg: dict | None = None):
         import h5py
 
         self.h5_path = str(util.resolve_path(h5_path))
+        self.augment_cfg = dict(augment_cfg) if augment_cfg else None
+        self._aug_rng = np.random.default_rng(self.augment_cfg.get("aug_seed")) if self.augment_cfg else None
         if not os.path.exists(self.h5_path):
             raise FileNotFoundError(f"No se encontró HDF5: {self.h5_path}")
 
@@ -96,6 +98,9 @@ class HDF5ECGDataset(Dataset):
             self._open()
             x = np.asarray(self.h5["signals"][index], dtype=np.float32).T
             y = np.asarray(self.h5["labels"][index], dtype=np.float32)
+        if self.augment_cfg is not None:
+            from ecg import augment
+            x = augment.augment_signal(x, rng=self._aug_rng, cfg=self.augment_cfg)
         return torch.from_numpy(x), torch.from_numpy(y)
 
     def __del__(self):
@@ -138,7 +143,6 @@ def model_params(params: dict) -> dict:
         "conv_subsample_lengths": params.get("conv_subsample_lengths", [1, 2] * 8),
         "conv_num_skip": int(params.get("conv_num_skip", 2)),
         "conv_dropout": float(params.get("conv_dropout", params.get("drop_rate", 0.2))),
-        "is_regular_conv": bool(params.get("is_regular_conv", False)),
     }
 
 
@@ -157,7 +161,19 @@ def compute_pos_weight(train_h5: str | Path) -> tuple[torch.Tensor, np.ndarray, 
 
 def make_dataloaders(params: dict):
     expected_classes = int(params.get("num_classes", load.NUM_CLASSES))
-    train_ds = HDF5ECGDataset(params["train"], expected_num_classes=expected_classes)
+    augment_cfg = None
+    if params.get("augment", False):
+        augment_cfg = {
+            "aug_prob": float(params.get("aug_prob", 0.5)),
+            "aug_noise_std": float(params.get("aug_noise_std", 0.01)),
+            "aug_baseline_amp": float(params.get("aug_baseline_amp", 0.1)),
+            "aug_scale_range": float(params.get("aug_scale_range", 0.1)),
+            "aug_shift_max": int(params.get("aug_shift_max", 250)),
+            "aug_lead_drop_prob": float(params.get("aug_lead_drop_prob", 0.05)),
+            "aug_seed": params.get("aug_seed", None),
+        }
+        print(f"Aumentación activada (solo train): {augment_cfg}")
+    train_ds = HDF5ECGDataset(params["train"], expected_num_classes=expected_classes, augment_cfg=augment_cfg)
     dev_ds = HDF5ECGDataset(params["dev"], expected_num_classes=expected_classes)
     if train_ds.classes != dev_ds.classes:
         raise ValueError("Las clases de train y dev no coinciden")
@@ -187,13 +203,22 @@ def _loader_kwargs(params: dict, shuffle: bool) -> dict:
     return kwargs
 
 
-def run_epoch(model, loader, criterion, optimizer, device, scaler=None) -> float:
+def smooth_targets(y, smoothing: float):
+    """Label smoothing para BCE multilabel: 0→s/2, 1→1-s/2."""
+    s = float(smoothing)
+    if s <= 0:
+        return y
+    return y * (1.0 - s) + 0.5 * s
+
+
+def run_epoch(model, loader, criterion, optimizer, device, scaler=None, label_smoothing: float = 0.0) -> float:
     model.train()
     total_loss, total = 0.0, 0
     progress = tqdm(loader, desc="train", leave=False)
     for x, y in progress:
         x = x.to(device, non_blocking=True)
         y = y.to(device, non_blocking=True)
+        y = smooth_targets(y, label_smoothing)
         optimizer.zero_grad(set_to_none=True)
 
         if scaler is not None:
@@ -237,6 +262,33 @@ def evaluate_loss(model, loader, criterion, device, amp: bool = False) -> float:
     return total_loss / max(total, 1)
 
 
+@torch.no_grad()
+def evaluate_val_f1(model, loader, device, amp: bool = False) -> float:
+    """F1-macro en validación con umbral fijo 0.5 (métrica de selección)."""
+    from sklearn.metrics import f1_score
+    model.eval()
+    all_true, all_pred = [], []
+    for x, y in tqdm(loader, desc="dev-f1", leave=False):
+        x = x.to(device, non_blocking=True)
+        if amp and device.type == "cuda":
+            with torch.autocast(device_type="cuda", dtype=torch.float16):
+                logits = model(x)
+        else:
+            logits = model(x)
+        all_true.append(y.detach().cpu())
+        all_pred.append((torch.sigmoid(logits).float().cpu() >= 0.5).to(torch.uint8))
+    y_true = torch.cat(all_true, dim=0).numpy()
+    y_pred = torch.cat(all_pred, dim=0).numpy()
+    return float(f1_score(y_true, y_pred, average="macro", zero_division=0))
+
+
+def is_monitor_improvement(value: float, best: float, monitor: str) -> bool:
+    """Compara según la métrica monitorizada (F1 se maximiza, loss se minimiza)."""
+    if monitor == "val_f1_macro":
+        return float(value) > float(best)
+    return float(value) < float(best)
+
+
 def write_history(save_dir: Path, history: list[dict]) -> None:
     if not history:
         return
@@ -269,6 +321,8 @@ def train(args, params: dict):
     save_dir = util.timestamped_dir(params.get("save_dir", "saved/cinc2020"), args.experiment)
     (save_dir / "config_used.json").write_text(json.dumps(params, indent=2, ensure_ascii=False), encoding="utf-8")
 
+    if params.get("is_regular_conv"):
+        raise ValueError("La CNN convencional fue descontinuada; entrene ResNet-34.")
     model = network.build_network(**model_params(params)).to(device)
     param_count = util.count_parameters(model)
 
@@ -310,8 +364,12 @@ def train(args, params: dict):
         except Exception:
             scaler = torch.cuda.amp.GradScaler()
 
+    monitor = str(params.get("early_stopping_metric", "val_loss"))
+    if monitor not in ("val_loss", "val_f1_macro"):
+        raise ValueError(f"early_stopping_metric debe ser val_loss o val_f1_macro, recibido {monitor}")
+    print(f"Monitorizando: {monitor} (el scheduler sigue usando val_loss)")
     start_epoch = 0
-    best_val_loss = float("inf")
+    best_monitor = float("-inf") if monitor == "val_f1_macro" else float("inf")
     if args.resume:
         ckpt = util.load_checkpoint(args.resume, map_location=device)
         model.load_state_dict(ckpt["model_state_dict"])
@@ -320,7 +378,11 @@ def train(args, params: dict):
         if ckpt.get("scheduler_state_dict"):
             scheduler.load_state_dict(ckpt["scheduler_state_dict"])
         start_epoch = int(ckpt.get("epoch", 0))
-        best_val_loss = float(ckpt.get("val_loss", best_val_loss))
+        if monitor == "val_f1_macro":
+            best_monitor = evaluate_val_f1(model, dev_loader, device, amp=use_amp)
+            print(f"F1-macro inicial del checkpoint reanudado: {best_monitor:.4f}")
+        else:
+            best_monitor = float(ckpt.get("val_loss", best_monitor))
         print(f"Reanudado desde {args.resume}, época {start_epoch}")
 
     max_epochs = int(args.epochs or params.get("max_epochs", params.get("epochs", 80)))
@@ -332,15 +394,18 @@ def train(args, params: dict):
     for epoch in range(start_epoch, max_epochs):
         epoch_start = time.time()
         print(f"\nÉpoca {epoch + 1}/{max_epochs}")
-        train_loss = run_epoch(model, train_loader, criterion, optimizer, device, scaler=scaler)
+        train_loss = run_epoch(model, train_loader, criterion, optimizer, device, scaler=scaler,
+                               label_smoothing=float(params.get("label_smoothing", 0.0)))
         val_loss = evaluate_loss(model, dev_loader, criterion, device, amp=use_amp)
+        val_f1 = evaluate_val_f1(model, dev_loader, device, amp=use_amp)
         scheduler.step(val_loss)
         lr = optimizer.param_groups[0]["lr"]
         epoch_seconds = time.time() - epoch_start
 
-        improved = val_loss < best_val_loss
+        monitored = val_f1 if monitor == "val_f1_macro" else val_loss
+        improved = is_monitor_improvement(monitored, best_monitor, monitor)
         if improved:
-            best_val_loss = float(val_loss)
+            best_monitor = float(monitored)
             no_improve = 0
         else:
             no_improve += 1
@@ -379,6 +444,7 @@ def train(args, params: dict):
             "epoch": epoch + 1,
             "train_loss": float(train_loss),
             "val_loss": float(val_loss),
+            "val_f1_macro": float(val_f1),
             "learning_rate": float(lr),
             "epoch_seconds": float(epoch_seconds),
             "improved": bool(improved),
@@ -387,7 +453,7 @@ def train(args, params: dict):
         history.append(row)
         write_history(save_dir, history)
 
-        print(f"train_loss={train_loss:.6f} | val_loss={val_loss:.6f} | lr={lr:.8f} | {epoch_seconds:.1f}s")
+        print(f"train_loss={train_loss:.6f} | val_loss={val_loss:.6f} | val_f1={val_f1:.4f} | lr={lr:.8f} | {epoch_seconds:.1f}s")
         if no_improve >= patience:
             print("Early stopping activado")
             break
@@ -397,10 +463,12 @@ def train(args, params: dict):
         "label_schema": load.LABEL_SCHEMA,
         "problem_type": "multilabel sigmoid + BCEWithLogitsLoss",
         "model_type": model.model_type,
-        "is_regular_conv": bool(params.get("is_regular_conv", False)),
         "class_names": class_names,
         "num_parameters": param_count,
-        "best_val_loss": best_val_loss,
+        "monitor": monitor,
+        "best_monitored_value": float(best_monitor),
+        "final_val_loss": float(history[-1]["val_loss"]) if history else None,
+        "final_val_f1_macro": float(history[-1]["val_f1_macro"]) if history else None,
         "epochs_completed": len(history),
         "total_seconds": float(time.time() - total_start),
         "save_dir": str(save_dir),
@@ -413,7 +481,7 @@ def train(args, params: dict):
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="Entrena ResNet/CNN CINC2020-12")
+    parser = argparse.ArgumentParser(description="Entrena ResNet-34 CINC2020-12")
     parser.add_argument("config", help="JSON de configuración")
     parser.add_argument("--experiment", "-e", default="cinc2020_resnet", help="Nombre del experimento")
     parser.add_argument("--epochs", type=int, default=None, help="Sobrescribe max_epochs")

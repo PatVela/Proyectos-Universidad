@@ -139,8 +139,7 @@ def _checkpoint_info(model_path: str | None, saved_dir: str | None) -> dict | No
         return {
             "available": True,
             "model_path": str(resolved),
-            "model_type": "CNN convencional equivalente" if config.get("is_regular_conv") else "ResNet-34 1D tipo Hannun",
-            "is_regular_conv": bool(config.get("is_regular_conv", False)),
+            "model_type": "ResNet-34 1D tipo Hannun",
             "classes": classes,
             "device": "auto",
             "config": config,
@@ -192,7 +191,13 @@ def _read_csv_records(path: Path) -> list[dict]:
 
 
 def _candidate_result_dirs() -> list[Path]:
-    return [
+    """Carpetas con salidas de evaluate.py (--eval-dir va primero si se indicó)."""
+    dirs: list[Path] = []
+    extra = clean_path_text(os.environ.get("ECG_EVAL_DIR", ""))
+    if extra:
+        p = Path(extra)
+        dirs.append(p if p.is_absolute() else REPO_ROOT / p)
+    return dirs + [
         REPO_ROOT / "results" / "cinc2020_12_resnet",
         REPO_ROOT / "results" / "cinc2020_12",
         REPO_ROOT / "results" / "cinc2020_12_eval",
@@ -249,6 +254,53 @@ def _load_thresholds_for_app(model_path: str | None, saved_dir: str | None) -> t
     return None, None
 
 
+def _load_temperatures_for_app(model_path: str | None, saved_dir: str | None, env_var: str = "ECG_TEMPERATURES") -> tuple[dict | None, str | None]:
+    """Busca temperatures_validation.csv generado por calibrate.py.
+
+    Si existe, la webapp aplica temperature scaling por clase antes de los
+    umbrales, igual que ``evaluate.py --temperatures``. Con ``env_var`` se
+    distingue el modelo A del B en modo ensemble.
+    """
+    candidates: list[Path] = []
+    try:
+        resolved = resolve_model_path(model_path=model_path, saved_dir=saved_dir)
+        candidates.extend([
+            resolved.parent / "temperatures_validation.csv",
+            resolved.parent.parent / "temperatures_validation.csv",
+        ])
+    except Exception:
+        pass
+    explicit = clean_path_text(os.environ.get(env_var, ""))
+    if explicit:
+        p = Path(explicit)
+        candidates.insert(0, p if p.is_absolute() else REPO_ROOT / p)
+
+    for folder in _candidate_result_dirs():
+        candidates.append(folder / "temperatures_validation.csv")
+
+    results_root = REPO_ROOT / "results"
+    if results_root.exists():
+        candidates.extend(sorted(results_root.rglob("temperatures_validation.csv"), key=lambda p: p.stat().st_mtime, reverse=True))
+
+    seen = set()
+    for path in candidates:
+        path = path.resolve()
+        if path in seen or not path.exists():
+            continue
+        seen.add(path)
+        try:
+            import pandas as pd
+            df = pd.read_csv(path)
+            if "class" not in df.columns or "temperature" not in df.columns:
+                continue
+            values = {str(row["class"]): float(row["temperature"]) for _, row in df.iterrows()}
+            if all(name in values for name in load.CLASS_NAMES):
+                return values, str(path)
+        except Exception:
+            continue
+    return None, None
+
+
 def _best_worst(rows: list[dict], key: str, label: str) -> tuple[dict | None, dict | None]:
     """Mejor/peor fila por una métrica numérica (tolerante a valores ausentes)."""
     best = worst = None
@@ -296,12 +348,22 @@ def _load_metrics() -> dict:
 
 
 def _load_experiment_results() -> dict:
-    root = REPO_ROOT / "results" / "cinc2020_12"
-    comparison = _read_csv_records(root / "model_comparison.csv")
-    robustness_paths = [
-        root / "robustness.csv",
+    roots: list[Path] = []
+    extra = clean_path_text(os.environ.get("ECG_EXP_DIR", ""))
+    if extra:
+        p = Path(extra)
+        roots.append(p if p.is_absolute() else REPO_ROOT / p)
+    roots.append(REPO_ROOT / "results" / "cinc2020_12")
+    comparison: list = []
+    comparison_root = roots[-1]
+    for root in roots:
+        comparison = _read_csv_records(root / "model_comparison.csv")
+        if comparison:
+            comparison_root = root
+            break
+    robustness_paths = [r / "robustness.csv" for r in roots] + [
         REPO_ROOT / "results" / "cinc2020_12_resnet" / "robustness.csv",
-        REPO_ROOT / "results" / "cinc2020_12_cnn" / "robustness.csv",
+
     ]
     robustness = []
     robustness_path = ""
@@ -338,7 +400,7 @@ def _load_experiment_results() -> dict:
                 }
     return {
         "comparison_found": bool(comparison),
-        "comparison_path": str(root / "model_comparison.csv"),
+        "comparison_path": str(comparison_root / "model_comparison.csv"),
         "comparison": comparison,
         "comparison_winner": comparison_winner,
         "robustness_found": bool(robustness),
@@ -348,11 +410,47 @@ def _load_experiment_results() -> dict:
     }
 
 
+def _curves_available(split: str = "test") -> bool:
+    for folder in _candidate_result_dirs():
+        if (folder / f"roc_curves_{split}.csv").exists() or (folder / f"pr_curves_{split}.csv").exists():
+            return True
+    return False
+
+
+def _load_curves(split: str = "test") -> dict:
+    """Lee curvas ROC/PR por clase para el endpoint /curves (split test o validation)."""
+    import pandas as pd
+    for folder in _candidate_result_dirs():
+        roc_csv = folder / f"roc_curves_{split}.csv"
+        pr_csv = folder / f"pr_curves_{split}.csv"
+        if not (roc_csv.exists() or pr_csv.exists()):
+            continue
+        curves: dict[str, dict[str, list]] = {}
+        try:
+            if roc_csv.exists():
+                for name, group in pd.read_csv(roc_csv).groupby("class"):
+                    key = str(name)
+                    curves.setdefault(key, {})["fpr"] = [round(float(v), 4) for v in group["fpr"]]
+                    curves[key]["tpr"] = [round(float(v), 4) for v in group["tpr"]]
+            if pr_csv.exists():
+                for name, group in pd.read_csv(pr_csv).groupby("class"):
+                    key = str(name)
+                    curves.setdefault(key, {})["precision"] = [round(float(v), 4) for v in group["precision"]]
+                    curves[key]["recall"] = [round(float(v), 4) for v in group["recall"]]
+        except Exception:
+            continue
+        if curves:
+            return {"found": True, "split": split, "classes": sorted(curves), "curves": curves}
+    return {"found": False, "split": split, "classes": [], "curves": {}}
+
+
 def create_app() -> Flask:
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024
 
     app.config["ECG_MODEL"] = clean_path_text(os.environ.get("ECG_MODEL", ""))
+    app.config["ECG_MODEL_B"] = clean_path_text(os.environ.get("ECG_MODEL_B", ""))
+    app.config["ECG_ALPHA"] = float(os.environ.get("ECG_ALPHA", "0.5"))
     app.config["ECG_SAVED_DIR"] = str(_resolve_dir_env("ECG_SAVED", DEFAULT_SAVED))
     app.config["ECG_UPLOADS_DIR"] = str(_resolve_dir_env("ECG_UPLOADS", DEFAULT_UPLOADS))
     app.config["ECG_RESULTS_DIR"] = str(_resolve_dir_env("ECG_RESULTS", DEFAULT_RESULTS))
@@ -375,6 +473,9 @@ def create_app() -> Flask:
         resolved_model = _resolve_model_for_display(model_path, saved_dir)
         checkpoints = _list_checkpoints(saved_dir)
         model_info = _checkpoint_info(model_path, saved_dir)
+        if app.config["ECG_MODEL_B"] and model_info:
+            model_info["model_type"] = f"Ensemble ResNet-34 ×2 (α={float(app.config['ECG_ALPHA']):.2f})"
+            model_info["model_b"] = app.config["ECG_MODEL_B"]
         threshold_values, _ = _load_thresholds_for_app(model_path, saved_dir)
         thresholds_info = {
             "found": bool(threshold_values),
@@ -404,6 +505,7 @@ def create_app() -> Flask:
             metrics=_load_metrics(),
             experiments=_load_experiment_results(),
             thresholds_info=thresholds_info,
+            curves_found=_curves_available(),
         )
 
     @app.get("/models")
@@ -449,6 +551,17 @@ def create_app() -> Flask:
                 app.config["ECG_MODEL"],
                 app.config["ECG_SAVED_DIR"],
             )
+            class_temperatures, temperature_source = _load_temperatures_for_app(
+                app.config["ECG_MODEL"],
+                app.config["ECG_SAVED_DIR"],
+            )
+            class_temperatures_b, temperature_source_b = None, None
+            if app.config["ECG_MODEL_B"]:
+                class_temperatures_b, temperature_source_b = _load_temperatures_for_app(
+                    app.config["ECG_MODEL_B"],
+                    app.config["ECG_SAVED_DIR"],
+                    env_var="ECG_TEMPERATURES_B",
+                )
 
             result = run_prediction_from_uploads(
                 file_storages=files,
@@ -460,7 +573,13 @@ def create_app() -> Flask:
                 reference_labels=clean_path_text(request.form.get("true_labels", "")),
                 thresholds=class_thresholds,
                 threshold_source=threshold_source,
+                temperatures=class_temperatures,
+                temperature_source=temperature_source,
                 normal_fallback_min_prob=app.config["ECG_NORMAL_FALLBACK_MIN_PROB"],
+                model_path_b=app.config["ECG_MODEL_B"] or None,
+                temperatures_b=class_temperatures_b,
+                temperature_source_b=temperature_source_b,
+                alpha=app.config["ECG_ALPHA"],
             )
             result["patient_name"] = clean_path_text(request.form.get("patient_name", ""))
             result["patient_age"] = clean_path_text(request.form.get("patient_age", "")) or result.get("patient_age")
@@ -502,10 +621,22 @@ def create_app() -> Flask:
         experiments = _load_experiment_results()
         return jsonify({"ok": True, **experiments})
 
+    @app.get("/curves")
+    def curves_status():
+        split = request.args.get("split", "test")
+        if split not in ("test", "validation"):
+            split = "test"
+        return jsonify({"ok": True, **_load_curves(split)})
+
     @app.get("/health")
     def health():
         resolved = _resolve_model_for_display(app.config["ECG_MODEL"], app.config["ECG_SAVED_DIR"])
         ths, ths_source = _load_thresholds_for_app(app.config["ECG_MODEL"], app.config["ECG_SAVED_DIR"])
+        tmps, tmps_source = _load_temperatures_for_app(app.config["ECG_MODEL"], app.config["ECG_SAVED_DIR"])
+        tmps_b, tmps_b_source = None, None
+        if app.config["ECG_MODEL_B"]:
+            tmps_b, tmps_b_source = _load_temperatures_for_app(
+                app.config["ECG_MODEL_B"], app.config["ECG_SAVED_DIR"], env_var="ECG_TEMPERATURES_B")
         return jsonify({
             "status": "ok",
             "ECG_MODEL": app.config["ECG_MODEL"],
@@ -516,6 +647,13 @@ def create_app() -> Flask:
             "thresholds_found": ths is not None,
             "thresholds_source": ths_source,
             "thresholds": ths,
+            "temperatures_found": tmps is not None,
+            "temperature_source": tmps_source,
+            "ensemble": bool(app.config["ECG_MODEL_B"]),
+            "ECG_MODEL_B": app.config["ECG_MODEL_B"],
+            "ensemble_alpha": app.config["ECG_ALPHA"],
+            "temperatures_b_found": tmps_b is not None,
+            "temperature_b_source": tmps_b_source,
             "normal_fallback_min_probability": app.config["ECG_NORMAL_FALLBACK_MIN_PROB"],
             "num_classes": load.NUM_CLASSES,
             "accepted_uploads": [".csv", ".hea + .mat"],
@@ -530,11 +668,17 @@ app = create_app()
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Webapp CINC2020-12")
     parser.add_argument("--model", default=None, help="Checkpoint .pt. Si se omite, se busca automáticamente en --saved.")
+    parser.add_argument("--model-b", default=None, help="Segundo checkpoint para modo ensemble (promedio ponderado con --alpha).")
+    parser.add_argument("--alpha", type=float, default=None, help="Peso del modelo A en el ensemble [0, 1] (B recibe 1-alpha). Por defecto 0.5.")
     parser.add_argument("--saved", default=None, help="Directorio de checkpoints para búsqueda automática.")
     parser.add_argument("--uploads", default=None, help="Directorio de archivos subidos.")
     parser.add_argument("--results", default=None, help="Directorio de resultados generados.")
     parser.add_argument("--reference", default=None, help="Referencia opcional para documentación interna.")
     parser.add_argument("--thresholds", default=None, help="thresholds_validation.csv generado por evaluate.py. Si se omite, se busca automáticamente.")
+    parser.add_argument("--temperatures", default=None, help="temperatures_validation.csv de calibrate.py para el modelo A. Si se omite, se busca automáticamente.")
+    parser.add_argument("--temperatures-b", default=None, help="temperatures_validation.csv de calibrate.py para el modelo B (ensemble).")
+    parser.add_argument("--eval-dir", default=None, help="Carpeta con salidas de evaluate.py (métricas, umbrales, temperaturas, curvas). Si se omite, se busca automáticamente.")
+    parser.add_argument("--exp-dir", default=None, help="Carpeta con model_comparison.csv y robustness.csv. Si se omite, se busca automáticamente.")
     parser.add_argument("--normal-fallback-min-prob", type=float, default=None, help="Si ninguna clase supera umbral, añadir NSR cuando P(NSR) sea al menos este valor. Use 0 para desactivar.")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "5002")))
@@ -542,6 +686,13 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.model is not None:
         os.environ["ECG_MODEL"] = clean_path_text(args.model)
+    if args.model_b is not None:
+        os.environ["ECG_MODEL_B"] = clean_path_text(args.model_b)
+    if args.alpha is not None:
+        a = float(args.alpha)
+        if not 0.0 <= a <= 1.0:
+            parser.error("--alpha debe estar en [0, 1]")
+        os.environ["ECG_ALPHA"] = str(a)
     if args.saved is not None:
         os.environ["ECG_SAVED"] = clean_path_text(args.saved)
     if args.uploads is not None:
@@ -552,6 +703,14 @@ def main(argv: list[str] | None = None) -> None:
         os.environ["ECG_REFERENCE"] = clean_path_text(args.reference)
     if args.thresholds is not None:
         os.environ["ECG_THRESHOLDS"] = clean_path_text(args.thresholds)
+    if args.temperatures is not None:
+        os.environ["ECG_TEMPERATURES"] = clean_path_text(args.temperatures)
+    if args.temperatures_b is not None:
+        os.environ["ECG_TEMPERATURES_B"] = clean_path_text(args.temperatures_b)
+    if args.eval_dir is not None:
+        os.environ["ECG_EVAL_DIR"] = clean_path_text(args.eval_dir)
+    if args.exp_dir is not None:
+        os.environ["ECG_EXP_DIR"] = clean_path_text(args.exp_dir)
     if args.normal_fallback_min_prob is not None:
         os.environ["ECG_NORMAL_FALLBACK_MIN_PROB"] = str(args.normal_fallback_min_prob)
 
@@ -560,10 +719,15 @@ def main(argv: list[str] | None = None) -> None:
     print("WEBAPP CINC2020-12")
     print("=" * 72)
     print("Modelo CLI :", runtime_app.config["ECG_MODEL"] or "(auto)")
+    if runtime_app.config["ECG_MODEL_B"]:
+        print("Modelo B   :", runtime_app.config["ECG_MODEL_B"])
+        print("Ensemble α :", runtime_app.config["ECG_ALPHA"])
     print("Resuelto   :", _resolve_model_for_display(runtime_app.config["ECG_MODEL"], runtime_app.config["ECG_SAVED_DIR"]))
     _ths, _ths_source = _load_thresholds_for_app(runtime_app.config["ECG_MODEL"], runtime_app.config["ECG_SAVED_DIR"])
     print("Búsqueda   :", runtime_app.config["ECG_SAVED_DIR"])
     print("Thresholds :", _ths_source or "no encontrados; fallback global 0.5")
+    print("Eval dir   :", os.environ.get("ECG_EVAL_DIR", "") or "(búsqueda automática)")
+    print("Exp dir    :", os.environ.get("ECG_EXP_DIR", "") or "(búsqueda automática)")
     if _ths:
         print("  LVH      :", _ths.get("LVH", "—"), "| NSR:", _ths.get("NSR", "—"))
     print("Fallback N :", runtime_app.config["ECG_NORMAL_FALLBACK_MIN_PROB"], "(0 desactiva)")

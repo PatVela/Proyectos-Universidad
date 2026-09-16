@@ -56,13 +56,13 @@ Esta carpeta contiene el pipeline experimental completo del proyecto: desde la d
 |---|---|
 | `build_datasets.py` | Construye `train/val/test.h5` + CSV de distribución y resúmenes |
 | `evaluate.py` | Métricas multilabel + umbrales calibrados en validación |
-| `compare_models.py` | Compara ResNet-34 vs CNN convencional |
+| `compare_models.py` | Compara dos evaluaciones (p. ej. ResNet v1 vs v2) |
 | `robustness.py` | Robustez ante perturbaciones controladas de la señal |
 | `challenge_score.py` | Métrica oficial estilo Challenge 2020 (27 códigos) |
 | `diagnose_prediction.py` | Diagnóstico detallado de un registro |
 | `debug_record_prediction.py` | Compara señal webapp vs señal HDF5 por registro |
 | `make_syntethic.py` | Dataset sintético para smoke tests |
-| `config*.json` | Configs de ResNet, CNN convencional y sintético |
+| `config*.json` | Configs de ResNet, ResNet v2 y sintético |
 | `official/` | Scripts y tablas oficiales del Challenge 2020 |
 
 <p align="right">(<a href="#readme-top">volver arriba</a>)</p>
@@ -98,11 +98,13 @@ python examples/cinc2020/build_datasets.py \
 python -m ecg.train examples/cinc2020/config.json -e cinc2020_resnet
 ```
 
-### 3. Entrenar CNN convencional equivalente
+### 3. Entrenar ResNet-34 v2 (receta anti-sobreajuste)
 
 ```sh
-python -m ecg.train examples/cinc2020/config_regular_cnn.json -e cinc2020_cnn
+python -m ecg.train examples/cinc2020/config_resnet_v2.json -e cinc2020_resnet_v2
 ```
+
+Receta con aumentación de señal, label smoothing, más épocas y selección por F1-macro (ver §12).
 
 ### 4. Evaluar
 
@@ -113,7 +115,7 @@ python examples/cinc2020/evaluate.py \
   --output-dir <dir-evaluacion>
 ```
 
-Genera umbrales por clase, métricas por clase y globales, predicciones y matrices de confusión 2×2. Para cuantificar la regla post hoc NSR en todo el conjunto:
+Genera umbrales por clase, métricas por clase y globales, predicciones, matrices de confusión 2×2 y curvas ROC/PR por clase. También acepta `--temperatures` con el CSV de `calibrate.py` (ver §9). Para cuantificar la regla post hoc NSR en todo el conjunto:
 
 ```sh
 python examples/cinc2020/evaluate.py \
@@ -127,10 +129,13 @@ python examples/cinc2020/evaluate.py \
 
 ```sh
 python examples/cinc2020/compare_models.py \
-  --resnet <dir-eval-resnet> \
-  --cnn <dir-eval-cnn> \
+  --eval-a <dir-eval-a> \
+  --eval-b <dir-eval-b> \
+  --label-a <etiqueta-a> --label-b <etiqueta-b> \
   --output <comparacion.csv>
 ```
+
+Las etiquetas son opcionales (por defecto usa el nombre de cada directorio).
 
 ### 6. Robustez controlada
 
@@ -166,17 +171,79 @@ python examples/cinc2020/challenge_score.py \
   --output-dir <dir-metrica-challenge>
 ```
 
+### 9. Calibrar probabilidades (temperature scaling)
+
+```sh
+python examples/cinc2020/calibrate.py \
+  --checkpoint saved/cinc2020/cinc2020_resnet/<run>/best.pt \
+  --val-h5 data/cinc2020_12/val.h5 \
+  --output-dir <dir-calibracion>
+```
+
+Ajusta una temperatura por clase sobre validación y guarda el CSV de temperaturas + reporte ECE/Brier. Aplíquelo en evaluación con `--temperatures <temperaturas.csv>`; la webapp lo detecta automáticamente.
+
+### 10. Exportar a ONNX
+
+```sh
+python examples/cinc2020/export_onnx.py \
+  --checkpoint saved/cinc2020/cinc2020_resnet/<run>/best.pt \
+  --output <modelo>.onnx
+```
+
+Requiere `pip install onnx onnxruntime`. Verifica el grafo y compara numéricamente contra PyTorch.
+
+### 11. Análisis de errores por origen
+
+```sh
+python examples/cinc2020/error_analysis.py \
+  --predictions <dir-evaluacion>/predictions_test.csv \
+  --test-h5 data/cinc2020_12/test.h5 \
+  --output <errores-por-origen>.csv
+```
+
+Reporta exact-match y F1 macro/micro por cada subconjunto de origen (hospital/fuente).
+
 El diseño experimental completo está en [docs/experimentos_cinc2020.md](../../docs/experimentos_cinc2020.md).
+
+<p align="right">(<a href="#readme-top">volver arriba</a>)</p>
+
+### 12. Máxima accuracy: F-beta y ensemble
+
+Umbrales orientados a precisión (menos falsos positivos) con F0.5:
+
+```sh
+python examples/cinc2020/evaluate.py examples/cinc2020/config.json <checkpoint> \
+  --output-dir <dir-evaluacion> --threshold-beta 0.5
+```
+
+`--threshold-beta 1.0` = F1 (equilibrio, valor por defecto); `0.5` = menos FPs; `2.0` = menos FNs. La opción `--nsr-exclusive-min-prob` (predecir solo NSR si P(NSR) es muy alta) resultó perjudicial en ablación (−11 pts de F1-macro sin ganancia de precisión, porque NSR coexiste legítimamente con clases morfológicas); no se recomienda. La columna `validation_objective` de `thresholds_validation.csv` registra el objetivo optimizado.
+
+Ensemble promedio de dos checkpoints (mismo layout de salida que `evaluate.py`):
+
+```sh
+python examples/cinc2020/ensemble_evaluate.py examples/cinc2020/config.json <checkpoint-a> <checkpoint-b> \
+  --output-dir <dir-ensemble> --alpha 0.5 --threshold-beta 0.5 \
+  --temperatures-a <temperaturas-a>.csv --temperatures-b <temperaturas-b>.csv
+```
+
+Para re-entrenar la ResNet con receta anti-sobreajuste (más épocas, más regularización), usar `examples/cinc2020/config_resnet_v2.json` con `ecg.train`. Ese config selecciona el mejor checkpoint por F1-macro en validación (`early_stopping_metric: val_f1_macro`) en vez de por `val_loss`, porque ambas métricas pueden discrepar; `history.csv` registra ambas curvas en todos los runs. Además activa aumentación de señal (`augment: true`: ruido, deriva basal, escala, desplazamiento temporal, dropout de derivación) y label smoothing (`label_smoothing: 0.05`) para frenar el sobreajuste.
 
 <p align="right">(<a href="#readme-top">volver arriba</a>)</p>
 
 ## Roadmap
 
 - [x] Evaluación multilabel con umbrales calibrados
-- [x] Comparación ResNet vs CNN + robustez controlada
+- [x] Comparación de evaluaciones + robustez controlada
 - [x] Métrica oficial del Challenge sobre 27 códigos
-- [ ] Curvas ROC/PR por clase exportadas a CSV
-- [ ] Análisis de errores por subconjunto de origen
+- [x] Curvas ROC/PR por clase exportadas a CSV
+- [x] Análisis de errores por subconjunto de origen
+- [x] Calibración temperature scaling + reporte ECE/Brier
+- [x] Exportación a ONNX verificada numéricamente
+- [ ] Validación cruzada leave-one-source-out (generalización por hospital)
+- [ ] Curvas de calibración (reliability diagrams) exportadas a CSV
+- [x] Aumentación de señal durante el entrenamiento
+- [x] Umbrales F-beta + selección de checkpoint por F1-macro
+- [x] Ensemble promedio de checkpoints (evaluación e inferencia webapp)
 
 Ver los [issues abiertos](https://github.com/PatVela/Proyectos-Universidad/issues) para más propuestas.
 

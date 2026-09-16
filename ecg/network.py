@@ -1,4 +1,4 @@
-"""Redes ECG 1D: ResNet-34 inspirada en Hannun y CNN convencional equivalente.
+"""Red ECG 1D: ResNet-34 inspirada en Hannun.
 
 La implementación usa tensores PyTorch con forma ``(batch, channels, time)``.
 Para CINC2020-12, la entrada esperada es ``(batch, 12, 5000)`` y la salida son
@@ -96,32 +96,11 @@ class ResidualBlock(nn.Module):
         return out + shortcut
 
 
-class PlainBlock(nn.Module):
-    """Bloque convolucional sin conexión residual, equivalente en profundidad."""
-
-    def __init__(self, in_channels: int, out_channels: int, kernel_size: int = 7, stride: int = 1, dropout: float = 0.2):
-        super().__init__()
-        padding = kernel_size // 2
-        self.layers = nn.Sequential(
-            nn.BatchNorm1d(in_channels),
-            nn.ReLU(inplace=True),
-            nn.Conv1d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding, bias=False),
-            nn.BatchNorm1d(out_channels),
-            nn.ReLU(inplace=True),
-            nn.Dropout(dropout) if dropout and dropout > 0 else nn.Identity(),
-            nn.Conv1d(out_channels, out_channels, kernel_size=kernel_size, stride=1, padding=padding, bias=False),
-        )
-
-    def forward(self, x):
-        return self.layers(x)
-
-
 class ECGBackbone(nn.Module):
-    """Backbone común para ResNet y CNN convencional."""
+    """Backbone residual para ResNet-34."""
 
     def __init__(
         self,
-        block_cls,
         num_leads: int = 12,
         conv_filter_length: int = 7,
         conv_num_filters_start: int = 32,
@@ -147,7 +126,7 @@ class ECGBackbone(nn.Module):
         for block_index, stride in enumerate(self.conv_subsample_lengths):
             out_filters = _num_filters_at(block_index, conv_num_filters_start, increase_channels_at)
             blocks.append(
-                block_cls(
+                ResidualBlock(
                     in_filters,
                     out_filters,
                     kernel_size=conv_filter_length,
@@ -170,12 +149,7 @@ class ECGBackbone(nn.Module):
 
 
 class ECGClassifier(nn.Module):
-    """Clasificador ECG multilabel.
-
-    Si ``is_regular_conv=False`` usa bloques residuales. Si es ``True`` usa una
-    CNN convencional con el mismo calendario de filtros, convoluciones y
-    downsampling, pero sin shortcuts.
-    """
+    """Clasificador ECG multilabel con bloques residuales 1D (ResNet-34 tipo Hannun)."""
 
     def __init__(
         self,
@@ -187,19 +161,15 @@ class ECGClassifier(nn.Module):
         conv_subsample_lengths: list[int] | None = None,
         conv_num_skip: int = 2,
         conv_dropout: float = 0.2,
-        is_regular_conv: bool = False,
         **unused,
     ):
         super().__init__()
         if conv_num_skip != 2:
-            raise ValueError("Esta implementación usa conv_num_skip=2 para ResNet-34/CNN equivalente.")
+            raise ValueError("Esta implementación usa conv_num_skip=2 (ResNet-34).")
         self.num_leads = int(num_leads)
         self.num_classes = int(num_classes)
         self.input_length = int(input_length)
-        self.is_regular_conv = bool(is_regular_conv)
-        block_cls = PlainBlock if self.is_regular_conv else ResidualBlock
         self.backbone = ECGBackbone(
-            block_cls=block_cls,
             num_leads=self.num_leads,
             conv_filter_length=int(conv_filter_length),
             conv_num_filters_start=int(conv_num_filters_start),
@@ -211,7 +181,7 @@ class ECGClassifier(nn.Module):
 
     @property
     def model_type(self) -> str:
-        return "CNN convencional equivalente" if self.is_regular_conv else "ResNet-34 1D tipo Hannun"
+        return "ResNet-34 1D tipo Hannun"
 
     def logits(self, x):
         h = self.backbone(x)
@@ -223,21 +193,14 @@ class ECGClassifier(nn.Module):
         return self.logits(x)
 
 
-# Alias explícitos para documentación/tests.
+# Alias explícito para documentación/tests.
 class ECGResNet34(ECGClassifier):
     def __init__(self, **kwargs):
-        kwargs["is_regular_conv"] = False
-        super().__init__(**kwargs)
-
-
-class ECGRegularCNN(ECGClassifier):
-    def __init__(self, **kwargs):
-        kwargs["is_regular_conv"] = True
         super().__init__(**kwargs)
 
 
 def build_network(**params) -> ECGClassifier:
-    """Construye ResNet o CNN convencional según ``is_regular_conv``."""
+    """Construye la ResNet-34."""
     return ECGClassifier(**params)
 
 
