@@ -203,6 +203,16 @@ Para re-entrenar la ResNet con receta anti-sobreajuste (más épocas, más regul
 
 <p align="right">(<a href="#readme-top">volver arriba</a>)</p>
 
+### 13. Auditoría de códigos Dx
+
+```powershell
+python examples/cinc2020/audit_dx_codes.py --data_dir dataset2020 --output dx_code_audit.csv
+```
+
+Recorre los `.hea`, cuenta en cuántos registros aparece cada código Dx y lo cruza con el esquema de 12 clases y el mapeo oficial de 27 puntuados. Reporta códigos del esquema con frecuencia 0 y códigos Dx sin clase asignada. En `dataset2020`: 111 códigos distintos, 27/27 oficiales presentes, 0 frecuencias 0 y 10 códigos sin clase (pre-excitación/WPW, comorbilidades no diagnosticables por ECG y hallazgos inespecíficos o técnicos).
+
+<p align="right">(<a href="#readme-top">volver arriba</a>)</p>
+
 ## Roadmap
 
 - [x] Evaluación multilabel con umbrales calibrados

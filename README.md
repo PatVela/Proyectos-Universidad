@@ -347,6 +347,7 @@ Notas:
 │   ├── calibrate.py / ensemble_evaluate.py
 │   ├── error_analysis.py / export_onnx.py
 │   ├── diagnose_prediction.py / debug_record_prediction.py
+│   ├── audit_dx_codes.py     # cobertura Dx→clase (frecuencia SNOMED)
 │   ├── config*.json        # configs ResNet, ResNet v2 y sintético
 │   └── official/           # scripts y tablas oficiales del Challenge 2020
 ├── webapp/                 # dashboard Flask + informe PDF

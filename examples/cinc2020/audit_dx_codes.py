@@ -43,65 +43,23 @@ def load_official(path: Path) -> dict[str, str]:
 
 def scan_headers(data_dir: Path) -> tuple[int, int, Counter]:
     """Devuelve (n_hea, n_con_dx, contador código→n_registros)."""
-    hea_files: list[Path] = (
-        sorted(data_dir.rglob("*.hea"))
-        + sorted(data_dir.rglob("*.HEA"))
-    )
-
-    total = len(hea_files)
-
-    print(f"\nEncontrados {total:,} archivos .hea")
-    print("Iniciando auditoría...\n")
-
+    hea_files: list[Path] = sorted(data_dir.rglob("*.hea")) + sorted(data_dir.rglob("*.HEA"))
     counter: Counter = Counter()
     n_with_dx = 0
-
-    for i, hea in enumerate(hea_files, start=1):
-
+    for hea in hea_files:
         try:
-            text = hea.read_text(
-                encoding="utf-8",
-                errors="replace"
-            )
-        except OSError as e:
-            print(f"\n⚠ Error leyendo: {hea}")
-            print(f"  {e}")
+            text = hea.read_text(encoding="utf-8", errors="replace")
+        except OSError:
             continue
-
         codes: set[str] = set()
-
         for line in text.splitlines():
             match = DX_RE.match(line)
-
             if match:
-                codes.update(
-                    c.strip()
-                    for c in match.group(1).split(",")
-                    if c.strip()
-                )
-
+                codes.update(c.strip() for c in match.group(1).split(",") if c.strip())
         if codes:
             n_with_dx += 1
             counter.update(codes)
-
-        # ------------------------------------------
-        # Mostrar progreso cada 500 archivos
-        # ------------------------------------------
-        if i % 500 == 0 or i == total:
-            porcentaje = i / total * 100
-
-            print(
-                f"\rProcesados: {i:,}/{total:,} "
-                f"({porcentaje:6.2f}%) | "
-                f"Con Dx: {n_with_dx:,} | "
-                f"Códigos únicos: {len(counter):,}",
-                end="",
-                flush=True
-            )
-
-    print("\n\nAuditoría de encabezados terminada.")
-
-    return total, n_with_dx, counter
+    return len(hea_files), n_with_dx, counter
 
 
 def main() -> None:

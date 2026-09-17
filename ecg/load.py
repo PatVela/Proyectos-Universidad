@@ -84,7 +84,7 @@ CLASS_GROUPS_12 = [
     },
     {
         "name": "MI",
-        "display_name": "Myocardial infarction / ischemia group",
+        "display_name": "Myocardial infarction group",
         "description": "Infarto (incluye antiguo/anterior/agudo), isquemia y Q anormal.",
         "codes": [
             "164865005", "57054005", "164867002", "54329005",
@@ -105,7 +105,7 @@ CLASS_GROUPS_12 = [
     },
     {
         "name": "AF",
-        "display_name": "Atrial fibrillation / flutter group",
+        "display_name": "Atrial arrhythmia group",
         "description": "Fibrilación/flutter auricular y variantes relacionadas.",
         "codes": [
             "164889003", "164890007", "195080001", "282825002",
@@ -150,7 +150,7 @@ CLASS_GROUPS_12 = [
     },
     {
         "name": "BBB",
-        "display_name": "Bundle branch block / QRS abnormality group",
+        "display_name": "Intraventricular conduction block group",
         "description": "Bloqueos de rama (der/izq, completos/incompletos), conducción inespecífica y QRS anormal/bajo voltaje.",
         "codes": [
             "59118001", "713427006", "713426002", "164909002",
@@ -166,7 +166,7 @@ CLASS_GROUPS_12 = [
     },
     {
         "name": "AEctopy_Junctional",
-        "display_name": "Atrial ectopy / junctional / SVT / pacing group",
+        "display_name": "Supraventricular rhythm group",
         "description": "Ectopia auricular/supraventricular, ritmos de unión, TSV y ritmos de marcapasos.",
         "codes": [
             "284470004", "63593006", "713422000", "426664006",

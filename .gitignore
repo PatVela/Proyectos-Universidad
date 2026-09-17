@@ -28,6 +28,7 @@ eval-resnet-v2-noexcl/
 eval-resnet-fallback/
 comparacion_ensemble.csv
 errores_origen.csv
+dx_code_audit.csv
 
 # Modelos y reportes generados
 *.pt
