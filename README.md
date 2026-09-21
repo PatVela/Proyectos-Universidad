@@ -166,7 +166,7 @@ python -m ecg.train examples/cinc2020/config_synthetic.json -e smoke_test --epoc
 pytest tests/ -q
 ```
 
-Debe decir `35 passed`. No use el dataset sintético para reportar métricas científicas.
+Debe decir `53 passed`. No use el dataset sintético para reportar métricas científicas.
 
 ### Paso 1 — Descargar datos (~15 GB)
 
@@ -212,6 +212,12 @@ Opcional, segunda semilla para quedarse con la mejor:
 python -m ecg.train examples/cinc2020/config_resnet_v2.json -e cinc2020_resnet_v2b --seed 44
 ```
 
+Línea base no residual (misma receta que v1, ~35 min en GPU):
+
+```powershell
+python -m ecg.train examples/cinc2020/config_regular_cnn.json -e cinc2020_regular
+```
+
 ### Paso 4 — Checkpoints y calibración
 
 ```powershell
@@ -255,9 +261,11 @@ $evalMejor = "eval-resnet-v2"
 ```powershell
 python examples/cinc2020/ensemble_evaluate.py examples/cinc2020/config.json $resnet $resnet2 --output-dir ensemble --alpha 0.5 --threshold-beta 0.5 --temperatures-a eval-resnet/temperatures_validation.csv --temperatures-b eval-resnet-v2/temperatures_validation.csv
 python examples/cinc2020/compare_models.py --eval-a "$evalMejor" --eval-b ensemble --label-a "ResNet mejor" --label-b "Ensemble" --output comparacion_ensemble.csv
-python examples/cinc2020/robustness.py $mejor data/cinc2020_12/test.h5 --thresholds "$evalMejor/thresholds_validation.csv" --output exp-files/robustness.csv
+python examples/cinc2020/robustness.py $mejor data/cinc2020_12/test.h5 --thresholds "$evalMejor/thresholds_validation.csv" --temperatures "$evalMejor/temperatures_validation.csv" --output exp-files/robustness.csv
 python examples/cinc2020/challenge_score.py --checkpoint $mejor --test-h5 data/cinc2020_12/test.h5 --thresholds "$evalMejor/thresholds_validation.csv" --output-dir metrica-challenge
 python examples/cinc2020/error_analysis.py --predictions "$evalMejor/predictions_test.csv" --test-h5 data/cinc2020_12/test.h5 --output errores_origen.csv
+python examples/cinc2020/make_figures.py --eval-dir "$evalMejor" --outdir figs_eval --robustness exp-files/robustness.csv
+python examples/cinc2020/bootstrap_ci.py --predictions "$evalMejor/predictions_test.csv" --predictions-baseline eval-resnet/predictions_test.csv --output bootstrap_ci.json --n-bootstrap 1000
 ```
 
 ### Paso 8 — Diagnóstico de registros ejemplo
@@ -388,6 +396,8 @@ Detalles, formatos y endpoints en [webapp/README.md](webapp/README.md).
 * **Robustez controlada**: ruido gaussiano, baseline wander, escalado de amplitud y apagado de derivaciones (`robustness.py`).
 * **Métrica oficial estilo Challenge 2020** sobre los 27 códigos puntuados (`challenge_score.py`).
 * **Diagnóstico por registro**: inspección de casos individuales (`diagnose_prediction.py`, `debug_record_prediction.py`).
+* **Figuras empíricas e IC bootstrap**: curvas ROC/PR con punto de operación, barras de robustez e intervalos por bootstrap (`make_figures.py`, `bootstrap_ci.py`).
+* **Auditorías**: desglose por sexo y latencia de inferencia (`sex_breakdown.py`, `benchmark_latency.py`).
 
 Los resultados se visualizan automáticamente en la webapp. Comandos en [examples/cinc2020/README.md](examples/cinc2020/README.md) y diseño experimental en [docs/experimentos_cinc2020.md](docs/experimentos_cinc2020.md). Resultados finales en [docs/resultados_finales.md](docs/resultados_finales.md) y diagnóstico del fix v1→v2 en [docs/fix_prediccion_cinc2020.md](docs/fix_prediccion_cinc2020.md).
 
