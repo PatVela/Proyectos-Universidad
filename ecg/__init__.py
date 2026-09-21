@@ -17,6 +17,7 @@ __all__ = [
     "codes_to_vector",
     "preprocess_ecg_array",
     "ECGClassifier",
+    "ECGRegularCNN",
     "ECGResNet34",
     "build_network",
     "count_parameters",
@@ -34,7 +35,7 @@ _LOAD_EXPORTS = {
     "codes_to_vector",
     "preprocess_ecg_array",
 }
-_NETWORK_EXPORTS = {"ECGClassifier", "ECGResNet34", "build_network"}
+_NETWORK_EXPORTS = {"ECGClassifier", "ECGRegularCNN", "ECGResNet34", "build_network"}
 _UTIL_EXPORTS = {"count_parameters"}
 
 

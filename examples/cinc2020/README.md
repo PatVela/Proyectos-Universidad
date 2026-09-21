@@ -64,7 +64,12 @@ Esta carpeta contiene el pipeline experimental completo del proyecto: desde la d
 | `ensemble_evaluate.py` | Ensemble promedio de dos checkpoints |
 | `error_analysis.py` | Errores por subconjunto de origen (hospital/fuente) |
 | `export_onnx.py` | Exportación a ONNX con verificación numérica |
-| `make_syntethic.py` | Dataset sintético para smoke tests |
+| `audit_dx_codes.py` | Cobertura Dx→clase: frecuencias por código SNOMED |
+| `make_figures.py` | Figuras ROC/PR empíricas + robustez + aprendizaje |
+| `bootstrap_ci.py` | IC 95 % bootstrap de F1-macro y diferencia pareada |
+| `sex_breakdown.py` | F1-macro por sexo (auditoría de sesgo) |
+| `benchmark_latency.py` | Latencia de inferencia y conteo de parámetros |
+| `make_synthetic.py` | Dataset sintético para smoke tests |
 | `config*.json` | Configs de ResNet, ResNet v2 y sintético |
 | `official/` | Scripts y tablas oficiales del Challenge 2020 |
 
@@ -125,6 +130,12 @@ Genera umbrales por clase, métricas por clase y globales, predicciones, matrice
 python examples/cinc2020/evaluate.py examples/cinc2020/config.json $resnet --output-dir eval-resnet-fallback --normal-fallback-min-prob 0.40
 ```
 
+Para ablaciones con umbral fijo (p. ej. tabla 2×2 temperatura × umbral):
+
+```powershell
+python examples/cinc2020/evaluate.py examples/cinc2020/config.json $resnet --output-dir eval-abl-t05 --fixed-threshold 0.5
+```
+
 ### 5. Comparar modelos
 
 ```powershell
@@ -136,10 +147,10 @@ Las etiquetas son opcionales (por defecto usa el nombre de cada directorio).
 ### 6. Robustez controlada
 
 ```powershell
-python examples/cinc2020/robustness.py $mejor data/cinc2020_12/test.h5 --thresholds "$evalMejor/thresholds_validation.csv" --output exp-files/robustness.csv
+python examples/cinc2020/robustness.py $mejor data/cinc2020_12/test.h5 --thresholds "$evalMejor/thresholds_validation.csv" --temperatures "$evalMejor/temperatures_validation.csv" --output exp-files/robustness.csv
 ```
 
-Perturbaciones: ruido gaussiano, baseline wander, escalado de amplitud y apagado de derivaciones (incluye fila base `clean`).
+Perturbaciones: ruido gaussiano, baseline wander, escalado de amplitud y apagado de derivaciones (incluye fila base `clean`). Pase siempre `--temperatures` del mismo eval-dir que los umbrales: sin él, los umbrales calibrados se aplican sobre probabilidades crudas (protocolo mismatched, base subestimada).
 
 ### 7. Diagnóstico de predicción
 
@@ -210,6 +221,40 @@ python examples/cinc2020/audit_dx_codes.py --data_dir dataset2020 --output dx_co
 ```
 
 Recorre los `.hea`, cuenta en cuántos registros aparece cada código Dx y lo cruza con el esquema de 12 clases y el mapeo oficial de 27 puntuados. Reporta códigos del esquema con frecuencia 0 y códigos Dx sin clase asignada. En `dataset2020`: 111 códigos distintos, 27/27 oficiales presentes, 0 frecuencias 0 y 10 códigos sin clase (pre-excitación/WPW, comorbilidades no diagnosticables por ECG y hallazgos inespecíficos o técnicos).
+
+<p align="right">(<a href="#readme-top">volver arriba</a>)</p>
+
+### 14. Figuras empíricas del informe
+
+```powershell
+python examples/cinc2020/make_figures.py --eval-dir $evalMejor --outdir figs_eval --robustness exp-files/robustness.csv
+```
+
+Traza curvas ROC/PR empíricas por clase con punto de operación (idéntico a la tabla F1 por construcción), clases destacadas y barras de robustez. Agregue `--history-v1`/`--history-v2` con los `history.csv` de cada run para la figura de aprendizaje.
+
+### 15. Intervalos bootstrap (IC 95 %)
+
+```powershell
+python examples/cinc2020/bootstrap_ci.py --predictions $evalMejor/predictions_test.csv --predictions-baseline eval-resnet/predictions_test.csv --output bootstrap_ci.json --n-bootstrap 1000
+```
+
+Remuestrea registros del test (sistema fijo): IC de F1-macro, por clase y de la diferencia pareada entre modelos. Sin `--predictions-baseline` reporta solo el modelo.
+
+### 16. Auditorías: sexo, latencia y baseline
+
+```powershell
+python examples/cinc2020/sex_breakdown.py --predictions $evalMejor/predictions_test.csv --test-h5 data/cinc2020_12/test.h5 --output sex_breakdown.json
+```
+
+```powershell
+python examples/cinc2020/benchmark_latency.py --checkpoint $mejor --device auto --iters 200
+```
+
+```powershell
+python -m ecg.train examples/cinc2020/config_regular_cnn.json -e cinc2020_regular
+```
+
+Desglose de F1-macro por sexo, ms/ventana y parámetros, y entrenamiento de la CNN convencional (misma receta que v1) como línea base no residual.
 
 <p align="right">(<a href="#readme-top">volver arriba</a>)</p>
 

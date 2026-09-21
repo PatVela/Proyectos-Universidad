@@ -25,6 +25,12 @@ ensemble-f1/
 eval-resnet/
 eval-resnet-v2/
 eval-resnet-v2-noexcl/
+eval-abl-v2-opt/
+eval-abl-v2-t05/
+eval-abl-v2-temp-t05/
+eval-resnet-v2-nsrexcl/
+figs_eval_v1/
+figs_eval_v2/
 eval-resnet-fallback/
 comparacion_ensemble.csv
 errores_origen.csv

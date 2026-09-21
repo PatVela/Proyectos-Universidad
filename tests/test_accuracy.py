@@ -85,3 +85,14 @@ def test_ensemble_end_to_end_with_mocked_predictions(tmp_path, monkeypatch):
                  "predictions_test.csv", "evaluation_summary.json",
                  "roc_curves_test.csv", "pr_curves_test.csv"):
         assert (tmp_path / name).exists(), name
+
+
+def test_fixed_thresholds_desactiva_optimizacion():
+    rng = np.random.default_rng(11)
+    y = (rng.random((120, 2)) < 0.4).astype(np.uint8)
+    probs = rng.random((120, 2))
+    thresholds, df = evaluate.fixed_thresholds(y, probs, ["A", "B"], fixed=0.5)
+    assert (thresholds == 0.5).all()
+    assert list(df.columns) == ["index", "class", "threshold", "validation_f1",
+                                "validation_objective", "validation_positives"]
+    assert (df["threshold"] == 0.5).all()

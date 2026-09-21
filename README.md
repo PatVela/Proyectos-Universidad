@@ -161,8 +161,8 @@ Debe decir `cuda: True`. Si dice False: actualice el driver NVIDIA o instale la 
 Smoke test (~2 min):
 
 ```powershell
-python examples/cinc2020/make_syntethic.py
-python -m ecg.train examples/cinc2020/config_syntethic.json -e smoke_test --epochs 1 --device cpu --no-amp
+python examples/cinc2020/make_synthetic.py
+python -m ecg.train examples/cinc2020/config_synthetic.json -e smoke_test --epochs 1 --device cpu --no-amp
 pytest tests/ -q
 ```
 
@@ -348,7 +348,9 @@ Notas:
 │   ├── error_analysis.py / export_onnx.py
 │   ├── diagnose_prediction.py / debug_record_prediction.py
 │   ├── audit_dx_codes.py     # cobertura Dx→clase (frecuencia SNOMED)
-│   ├── config*.json        # configs ResNet, ResNet v2 y sintético
+│   ├── make_figures.py / bootstrap_ci.py   # figuras empíricas e IC bootstrap
+│   ├── sex_breakdown.py / benchmark_latency.py  # auditorías: sexo y latencia
+│   ├── config*.json        # configs ResNet, ResNet v2, regular y sintético
 │   └── official/           # scripts y tablas oficiales del Challenge 2020
 ├── webapp/                 # dashboard Flask + informe PDF
 │   ├── app.py / prediction.py / report_pdf.py / wsgi.py

@@ -23,10 +23,13 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, REPO_ROOT)
 
 from ecg import predict, util
+from ecg.calibration import apply_temperature, load_temperatures_csv
 
 
 def apply_perturbation(x, kind, level, rng):
     """x: tensor (B, 12, 5000) ya normalizado."""
+    if kind == "clean":
+        return x
     if kind == "clean":
         return x
     if kind == "gaussian_noise":
@@ -50,7 +53,7 @@ def apply_perturbation(x, kind, level, rng):
 
 
 @torch.no_grad()
-def evaluate_under_perturbation(model, dataset, thresholds, device, kind, level, batch_size, num_workers, max_samples, seed):
+def evaluate_under_perturbation(model, dataset, thresholds, device, kind, level, batch_size, num_workers, max_samples, seed, temperatures=None):
     rng = np.random.default_rng(seed)
     if max_samples is not None and max_samples < len(dataset):
         indices = rng.choice(len(dataset), size=max_samples, replace=False)
@@ -64,6 +67,8 @@ def evaluate_under_perturbation(model, dataset, thresholds, device, kind, level,
         probs.append(p)
         labels.append(y.numpy())
     y_prob = np.concatenate(probs, axis=0)
+    if temperatures is not None:
+        y_prob = apply_temperature(y_prob, temperatures)
     y_true = np.concatenate(labels, axis=0).astype(np.uint8)
     y_pred = (y_prob >= thresholds[None, :]).astype(np.uint8)
     return {
@@ -94,6 +99,7 @@ def main():
     parser.add_argument("checkpoint")
     parser.add_argument("test_h5", default="data/cinc2020_12/test.h5")
     parser.add_argument("--thresholds", default=None, help="thresholds_validation.csv; si se omite usa 0.5")
+    parser.add_argument("--temperatures", default=None, help="temperatures_validation.csv de calibrate.py; sin este flag las probs no se calibran")
     parser.add_argument("--output", default="results/cinc2020_12/robustness.csv")
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--num-workers", type=int, default=0,
@@ -109,6 +115,9 @@ def main():
     model, _checkpoint, class_names = predict.load_model(args.checkpoint, device=device)
     dataset = predict.HDF5PredictionDataset(args.test_h5, preload=not args.no_preload)
     thresholds = load_thresholds(args.thresholds, class_names)
+    temp_vec = load_temperatures_csv(args.temperatures, class_names) if args.temperatures else None
+    if temp_vec is not None:
+        print(f"Aplicando temperature scaling desde {args.temperatures}.")
 
     perturbations = [
         ("clean", 0.0),
@@ -127,6 +136,7 @@ def main():
         rows.append(evaluate_under_perturbation(
             model, dataset, thresholds, device, kind, level,
             args.batch_size, args.num_workers, args.max_samples, args.seed,
+            temperatures=temp_vec,
         ))
 
     out = Path(args.output)

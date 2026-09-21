@@ -91,6 +91,25 @@ def optimize_thresholds(y_true, y_prob, class_names, beta=1.0):
     return thresholds, pd.DataFrame(rows)
 
 
+def fixed_thresholds(y_true, y_prob, class_names, fixed=0.5):
+    """Umbral fijo para todas las clases (ablaciones; desactiva la optimización)."""
+    thresholds = np.full(y_true.shape[1], float(fixed), dtype=np.float32)
+    rows = []
+    for i, name in enumerate(class_names):
+        yt = y_true[:, i].astype(np.uint8)
+        pred = (y_prob[:, i] >= float(fixed)).astype(np.uint8)
+        f1 = float(f1_score(yt, pred, zero_division=0))
+        rows.append({
+            "index": i,
+            "class": name,
+            "threshold": float(fixed),
+            "validation_f1": f1,
+            "validation_objective": f1,
+            "validation_positives": int(yt.sum()),
+        })
+    return thresholds, pd.DataFrame(rows)
+
+
 def apply_normal_fallback(y_pred, y_prob, class_names, min_prob=None):
     """Añade NSR cuando ninguna clase supera umbral y P(NSR) es razonable."""
     if min_prob is None or float(min_prob) <= 0 or "NSR" not in class_names:
@@ -229,7 +248,7 @@ def save_roc_pr_curves(out_dir, y_true, y_prob, class_names, split, max_points=2
     return len(roc_rows), len(pr_rows)
 
 
-def run_evaluation(config, checkpoint, output_dir, batch_size=None, num_workers=None, device="auto", no_amp=False, normal_fallback_min_prob=None, preload=True, temperatures=None, threshold_beta=1.0, nsr_exclusive_min_prob=None):
+def run_evaluation(config, checkpoint, output_dir, batch_size=None, num_workers=None, device="auto", no_amp=False, normal_fallback_min_prob=None, preload=True, temperatures=None, threshold_beta=1.0, nsr_exclusive_min_prob=None, fixed_threshold=None):
     output_dir = util.resolve_path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -243,8 +262,12 @@ def run_evaluation(config, checkpoint, output_dir, batch_size=None, num_workers=
     if temp_vec is not None:
         print(f"Aplicando temperature scaling desde {temperatures}.")
         val["probabilities"] = apply_temperature(val["probabilities"], temp_vec)
-    print(f"Optimizando umbrales por clase con F-beta (beta={threshold_beta}).")
-    thresholds, threshold_df = optimize_thresholds(val["labels"], val["probabilities"], val["class_names"], beta=threshold_beta)
+    if fixed_threshold is not None:
+        print(f"Usando umbral fijo={fixed_threshold} (sin optimización).")
+        thresholds, threshold_df = fixed_thresholds(val["labels"], val["probabilities"], val["class_names"], fixed=float(fixed_threshold))
+    else:
+        print(f"Optimizando umbrales por clase con F-beta (beta={threshold_beta}).")
+        thresholds, threshold_df = optimize_thresholds(val["labels"], val["probabilities"], val["class_names"], beta=threshold_beta)
     threshold_df.to_csv(output_dir / "thresholds_validation.csv", index=False)
 
     val_class_df, val_global, val_pred = evaluate_predictions(
@@ -279,6 +302,7 @@ def run_evaluation(config, checkpoint, output_dir, batch_size=None, num_workers=
         "class_names": val["class_names"],
         "thresholds": thresholds,
         "threshold_beta": float(threshold_beta),
+        "fixed_threshold": None if fixed_threshold is None else float(fixed_threshold),
         "normal_fallback_min_prob": None if normal_fallback_min_prob is None else float(normal_fallback_min_prob),
         "nsr_exclusive_min_prob": None if nsr_exclusive_min_prob is None else float(nsr_exclusive_min_prob),
         "validation": val_global,
@@ -305,6 +329,7 @@ def main():
     parser.add_argument("--normal-fallback-min-prob", type=float, default=None, help="Postprocesamiento opcional: si no hay positivos, añadir NSR cuando P(NSR) >= valor. Ejemplo: 0.40")
     parser.add_argument("--temperatures", default=None, help="CSV class,temperature de calibrate.py; se aplica antes de optimizar umbrales y métricas")
     parser.add_argument("--threshold-beta", type=float, default=1.0, help="Beta del F-beta para optimizar umbrales: 1.0=F1, 0.5=menos FPs, 2.0=menos FNs")
+    parser.add_argument("--fixed-threshold", type=float, default=None, help="Umbral fijo para todas las clases (desactiva la optimización; para ablaciones)")
     parser.add_argument("--nsr-exclusive-min-prob", type=float, default=None, help="Si P(NSR) >= valor, predecir SOLO NSR. AVISO: en ablación redujo F1-macro sin mejorar precisión; no recomendado.")
     args = parser.parse_args()
 
@@ -330,6 +355,7 @@ def main():
         preload=not args.no_preload,
         temperatures=args.temperatures,
         threshold_beta=args.threshold_beta,
+        fixed_threshold=args.fixed_threshold,
         nsr_exclusive_min_prob=args.nsr_exclusive_min_prob,
     )
 

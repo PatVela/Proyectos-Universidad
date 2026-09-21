@@ -182,6 +182,7 @@ def list_checkpoints_info(models_dir: str | os.PathLike) -> list[dict]:
                 "epoch": ckpt.get("epoch"),
                 "label_schema": ckpt.get("label_schema"),
                 "class_names": ckpt.get("class_names"),
+                "is_regular_conv": (ckpt.get("config") or {}).get("is_regular_conv"),
             })
         except Exception as exc:
             rows.append({"rank": order, "path": str(path), "error": str(exc)})

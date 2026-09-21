@@ -130,6 +130,7 @@ def model_params_from_config(config: dict) -> dict:
         "conv_subsample_lengths": config.get("conv_subsample_lengths", [1, 2] * 8),
         "conv_num_skip": int(config.get("conv_num_skip", 2)),
         "conv_dropout": float(config.get("conv_dropout", config.get("drop_rate", 0.2))),
+        "is_regular_conv": bool(config.get("is_regular_conv", False)),
     }
 
 
@@ -148,8 +149,6 @@ def load_model(checkpoint_path: str | Path, device: torch.device | None = None, 
     checkpoint_path = util.resolve_path(checkpoint_path)
     checkpoint = util.load_checkpoint(checkpoint_path, map_location=device)
     config = checkpoint.get("config", {})
-    if config.get("is_regular_conv"):
-        raise ValueError("Este checkpoint es de la CNN convencional (descontinuada); use un checkpoint ResNet-34.")
     class_names = list(checkpoint.get("class_names", load.CLASS_NAMES.copy()))
     if len(class_names) != load.NUM_CLASSES:
         raise ValueError(f"El checkpoint tiene {len(class_names)} clases; se esperaban {load.NUM_CLASSES}")

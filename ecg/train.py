@@ -143,6 +143,7 @@ def model_params(params: dict) -> dict:
         "conv_subsample_lengths": params.get("conv_subsample_lengths", [1, 2] * 8),
         "conv_num_skip": int(params.get("conv_num_skip", 2)),
         "conv_dropout": float(params.get("conv_dropout", params.get("drop_rate", 0.2))),
+        "is_regular_conv": bool(params.get("is_regular_conv", False)),
     }
 
 
@@ -321,8 +322,6 @@ def train(args, params: dict):
     save_dir = util.timestamped_dir(params.get("save_dir", "saved/cinc2020"), args.experiment)
     (save_dir / "config_used.json").write_text(json.dumps(params, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    if params.get("is_regular_conv"):
-        raise ValueError("La CNN convencional fue descontinuada; entrene ResNet-34.")
     model = network.build_network(**model_params(params)).to(device)
     param_count = util.count_parameters(model)
 
