@@ -8,7 +8,7 @@ Variables PowerShell usadas en todos los bloques (definir una vez por terminal):
 
 ```powershell
 $resnet = Get-ChildItem saved/cinc2020/cinc2020_resnet/*/best.pt | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
-$resnet2 = Get-ChildItem saved/cinc2020/cinc2020_resnet_v2*/best.pt | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+$resnet2 = Get-ChildItem saved/cinc2020/cinc2020_resnet_v2*/*/best.pt | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
 $mejor = $resnet2
 $evalMejor = "eval-resnet-v2"
 ```
