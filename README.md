@@ -222,7 +222,7 @@ python -m ecg.train examples/cinc2020/config_regular_cnn.json -e cinc2020_regula
 
 ```powershell
 $resnet = Get-ChildItem saved/cinc2020/cinc2020_resnet/*/best.pt | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
-$resnet2 = Get-ChildItem saved/cinc2020/cinc2020_resnet_v2*/best.pt | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+$resnet2 = Get-ChildItem saved/cinc2020/cinc2020_resnet_v2/*/best.pt | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
 $resnet
 $resnet2
 ```
