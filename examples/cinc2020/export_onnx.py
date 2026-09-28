@@ -13,12 +13,11 @@ Requiere: ``pip install onnx onnxruntime``
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from pathlib import Path
 
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, REPO_ROOT)
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT))
 
 
 def main() -> None:

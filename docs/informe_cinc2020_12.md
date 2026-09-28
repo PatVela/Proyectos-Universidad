@@ -15,7 +15,7 @@ docs/       documentación experimental
 
 ## Etiquetas
 
-El esquema v2 (`cinc2020_12_grouped_snomed_v2`) tiene 12 clases multilabel, está definido en `ecg/load.py` y cubre las 27 clases puntuadas oficiales del Challenge 2020.
+El esquema v2 (`cinc2020_12_grouped_snomed_v2`) tiene 12 clases multilabel, está definido en `ecg/schema.py` (re-exportado por `ecg/load.py`) y cubre las 27 clases puntuadas oficiales del Challenge 2020.
 
 1. `NSR`: 426783006, 427393009.
 2. `AxisDev`: 39732003, 445118002, 47665007, 445211001, 251200008.
@@ -36,7 +36,7 @@ Se excluyen WPW/preexcitación (muy infrecuente y morfológicamente singular), d
 
 ## Preprocesamiento
 
-Implementación: `ecg/load.py` y wrapper `examples/cinc2020/build_datasets.py`.
+Implementación: `ecg/signal.py` + `ecg/datasets.py` (re-exportados por `ecg/load.py`) y wrapper `examples/cinc2020/build_datasets.py`.
 
 Pasos:
 
@@ -58,6 +58,7 @@ El split usa `MultilabelStratifiedShuffleSplit`; no hay fallback por fuente.
 Implementación: `ecg/network.py`.
 
 - `ECGResNet34`: ResNet 1D tipo Hannun, 16 bloques residuales, salida de 12 logits.
+- `ECGRegularCNN`: CNN convencional sin residuales (línea base con la misma receta que v1).
 
 ## Entrenamiento
 

@@ -166,7 +166,7 @@ python -m ecg.train examples/cinc2020/config_synthetic.json -e smoke_test --epoc
 pytest tests/ -q
 ```
 
-Debe decir `53 passed`. No use el dataset sintético para reportar métricas científicas.
+Debe decir `78 passed`. No use el dataset sintético para reportar métricas científicas.
 
 ### Paso 1 — Descargar datos (~15 GB)
 
@@ -175,6 +175,12 @@ bash descargar_datos_2020.sh
 ```
 
 En Windows, ejecute esta línea en una terminal **Git Bash**.
+
+Opcional, verificar que cada `.hea` tenga su `.mat`:
+
+```powershell
+python tools/check_missing.py --kind mats --data-dir dataset2020
+```
 
 ### Paso 2 — Construir HDF5 (~20–40 min según CPU)
 
@@ -222,7 +228,7 @@ python -m ecg.train examples/cinc2020/config_regular_cnn.json -e cinc2020_regula
 
 ```powershell
 $resnet = Get-ChildItem saved/cinc2020/cinc2020_resnet/*/best.pt | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
-$resnet2 = Get-ChildItem saved/cinc2020/cinc2020_resnet_v2/*/best.pt | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+$resnet2 = Get-ChildItem saved/cinc2020/cinc2020_resnet_v2*/*/best.pt | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
 $resnet
 $resnet2
 ```
@@ -256,7 +262,7 @@ $mejor = $resnet2
 $evalMejor = "eval-resnet-v2"
 ```
 
-### Paso 7 — Ensemble + experimentos
+### Paso 7 — Ensemble + experimentos (~20 min en GPU)
 
 ```powershell
 python examples/cinc2020/ensemble_evaluate.py examples/cinc2020/config.json $resnet $resnet2 --output-dir ensemble --alpha 0.5 --threshold-beta 0.5 --temperatures-a eval-resnet/temperatures_validation.csv --temperatures-b eval-resnet-v2/temperatures_validation.csv
@@ -299,12 +305,21 @@ En Linux/bash los comandos `python`, `pytest`, `bash` y `docker` son idénticos;
 
 ```bash
 resnet=$(ls -t saved/cinc2020/cinc2020_resnet/*/best.pt | head -1)
-resnet2=$(ls -t saved/cinc2020/cinc2020_resnet_v2*/best.pt | head -1)
+resnet2=$(ls -t saved/cinc2020/cinc2020_resnet_v2*/*/best.pt | head -1)
 mejor=$resnet2
 evalMejor="eval-resnet-v2"
 hea1=$(find dataset2020 -name E00001.hea | head -1)
 mat1="${hea1%.hea}.mat"
 ```
+
+### Si algo falla
+
+* `CUDA out of memory`: baje `batch_size` a 32 en el JSON y reentrene.
+* `Device: cpu` al arrancar: detenga, verifique `cuda: True` y relance. No entrene en CPU.
+* Duda del config usado: abra `config_used.json` dentro de la carpeta `Save dir` del run.
+* `pip install -r requirements.txt` falla en `gevent`: coméntelo con `#` (solo sirve para despliegue productivo).
+* Época lenta (>3 min en GPU): confirme el mensaje `Precargando a RAM`; cierre aplicaciones pesadas.
+* Webapp sin métricas: revise `--eval-dir`/`--exp-dir`; `/health` muestra qué detectó.
 
 _Más ejemplos y comandos avanzados en [examples/cinc2020/README.md](examples/cinc2020/README.md) y [webapp/README.md](webapp/README.md)._
 
@@ -313,7 +328,7 @@ _Más ejemplos y comandos avanzados en [examples/cinc2020/README.md](examples/ci
 <!-- CLASS SCHEMA -->
 ## Esquema de 12 clases
 
-Fuente de verdad: `ecg/load.py` (esquema `cinc2020_12_grouped_snomed_v2`). Cubre las 27 clases puntuadas oficiales del Challenge 2020 (ver `examples/cinc2020/official/dx_mapping_scored.csv`); el esquema v1 solo cubría ~14 y dejaba ~21% de registros como all-zero.
+Fuente de verdad: `ecg/schema.py` (re-exportado por `ecg/load.py`; esquema `cinc2020_12_grouped_snomed_v2`). Cubre las 27 clases puntuadas oficiales del Challenge 2020 (ver `examples/cinc2020/official/dx_mapping_scored.csv`); el esquema v1 solo cubría ~14 y dejaba ~21% de registros como all-zero.
 
 | # | Clase | Códigos SNOMED-CT incluidos |
 |--:|---|---|
@@ -344,10 +359,15 @@ Notas:
 ```text
 .
 ├── ecg/                    # paquete: carga, red, entrenamiento e inferencia
-│   ├── load.py             # lectores ECG, normalización y mapeo SNOMED
+│   ├── load.py             # fachada: re-exporta schema/signal/datasets
+│   ├── schema.py           # esquema SNOMED 12 clases + mapeo a vectores
+│   ├── signal.py           # lectores WFDB/CSV, normalización y ventanas
+│   ├── datasets.py         # escaneo, splits y construcción de HDF5
 │   ├── network.py          # ResNet-34 tipo Hannun
 │   ├── predict.py          # inferencia desde checkpoints (CSV/HDF5)
 │   ├── train.py            # entrenamiento + logs reproducibles
+│   ├── augment.py          # aumentación de señal (preserva etiquetas)
+│   ├── calibration.py      # temperature scaling por clase
 │   └── util.py             # checkpoints, parámetros y seeds
 ├── examples/cinc2020/      # pipeline: datos, evaluación y experimentos
 │   ├── build_datasets.py / evaluate.py / compare_models.py
@@ -359,7 +379,8 @@ Notas:
 │   ├── make_figures.py / bootstrap_ci.py   # figuras empíricas e IC bootstrap
 │   ├── sex_breakdown.py / benchmark_latency.py  # auditorías: sexo y latencia
 │   ├── config*.json        # configs ResNet, ResNet v2, regular y sintético
-│   └── official/           # scripts y tablas oficiales del Challenge 2020
+│   └── official/           # scripts y tablas oficiales (vendored, no modificar)
+├── tools/                  # descarga/verificación CINC2020 + auditorías de dataset
 ├── webapp/                 # dashboard Flask + informe PDF
 │   ├── app.py / prediction.py / report_pdf.py / wsgi.py
 │   ├── project_info.py     # datos institucionales

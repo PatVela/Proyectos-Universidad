@@ -61,7 +61,7 @@ del centro se pierden, pero la etiqueta del registro completo se mantiene
 
 | # | Cambio | Archivos | ¿Requiere reentrenar? |
 |---|--------|----------|----------------------|
-| 1 | Esquema **v2**: 12 grupos expandidos que cubren las 27 clases puntuadas; all-zero 21%→0.6% | `ecg/load.py`, README, docs | **Sí** (HDF5 + train) |
+| 1 | Esquema **v2**: 12 grupos expandidos que cubren las 27 clases puntuadas; all-zero 21%→0.6% | `ecg/schema.py` (antes `ecg/load.py` monolítico), README, docs | **Sí** (HDF5 + train) |
 | 2 | Normalización **física**: mV vía ganancia/baseline + pasa-banda 0.5–50 Hz + clip ±5 mV (modos `global_zscore`/`per_lead_zscore` disponibles) | `ecg/load.py` | **Sí** |
 | 3 | **Multi-ventana**: train hasta 4 ventanas/registro largo; inferencia deslizante con agregación max | `ecg/load.py`, `ecg/predict.py`, `webapp/prediction.py` | Parcial (train sí; inferencia mejora también checkpoints v1) |
 | 4 | Compatibilidad v1↔v2: preprocesamiento según `label_schema` del checkpoint, traducción LAD/RBBB, CSV con marcador `# Preprocessed`, heurística de unidades | `ecg/load.py`, `ecg/predict.py`, `webapp/*` | No |
@@ -69,6 +69,8 @@ del centro se pierden, pero la etiqueta del registro completo se mantiene
 | 6 | **Métrica oficial** estilo Challenge (27 códigos + `weights.csv`) | `examples/cinc2020/challenge_score.py`, `official/` | No |
 | 7 | **Diagnóstico integral** unificado | `examples/cinc2020/diagnose_prediction.py` | No |
 | 8 | `torch` fuera de `requirements.txt`: se instala aparte con CUDA vía `requirements-cuda.txt` (ver README, Paso 0) | `requirements.txt`, `requirements-cuda.txt` | No |
+
+Nota (post-depuración): `ecg/load.py` es hoy una fachada que re-exporta `ecg/schema.py` (esquema), `ecg/signal.py` (lectura/preprocesamiento) y `ecg/datasets.py` (HDF5/CLI).
 
 ## 3. Migración (pasos para reentrenar en v2)
 

@@ -70,8 +70,8 @@ Esta carpeta contiene el pipeline experimental completo del proyecto: desde la d
 | `sex_breakdown.py` | F1-macro por sexo (auditoría de sesgo) |
 | `benchmark_latency.py` | Latencia de inferencia y conteo de parámetros |
 | `make_synthetic.py` | Dataset sintético para smoke tests |
-| `config*.json` | Configs de ResNet, ResNet v2 y sintético |
-| `official/` | Scripts y tablas oficiales del Challenge 2020 |
+| `config*.json` | Configs de ResNet, ResNet v2, regular y sintético |
+| `official/` | Scripts y tablas oficiales (vendored, no modificar) |
 
 <p align="right">(<a href="#readme-top">volver arriba</a>)</p>
 
@@ -93,7 +93,7 @@ Comandos PowerShell desde la **raíz del repositorio**, con variables para no es
 
 ```powershell
 $resnet = Get-ChildItem saved/cinc2020/cinc2020_resnet/*/best.pt | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
-$resnet2 = Get-ChildItem saved/cinc2020/cinc2020_resnet_v2*/best.pt | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+$resnet2 = Get-ChildItem saved/cinc2020/cinc2020_resnet_v2*/*/best.pt | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
 $mejor = $resnet2
 $evalMejor = "eval-resnet-v2"
 ```

@@ -10,15 +10,14 @@ sin cambios.
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, REPO_ROOT)
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT))
 
 from ecg import load, predict, util
 from ecg.calibration import apply_temperature, load_temperatures_csv

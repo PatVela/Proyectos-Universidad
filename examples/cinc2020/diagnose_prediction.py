@@ -130,7 +130,7 @@ def calibration_spotcheck(checkpoint_path: str, h5_path: str, thresholds: np.nda
 
 
 def debug_record(args, class_names: list[str], thresholds: np.ndarray, pre: dict) -> None:
-    from examples.cinc2020.debug_record_prediction import find_record_in_hdf5, rows_from_probabilities, print_table
+    from examples.cinc2020._record_diag import find_record_in_hdf5, rows_from_probabilities, print_table
     config = json.loads(util.resolve_path(args.config).read_text(encoding="utf-8"))
     device = predict.get_device(args.device)
     model, _ckpt, _names = predict.load_model(args.checkpoint, device=device)

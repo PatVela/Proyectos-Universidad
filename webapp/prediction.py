@@ -25,7 +25,7 @@ from werkzeug.utils import secure_filename
 
 from ecg import load, util
 from ecg.calibration import apply_temperature
-from ecg.predict import load_model, predict_array, predict_windows, preprocessing_for_checkpoint
+from ecg.predict import load_model, predict_array, predict_windows, prepare_csv_windows, preprocessing_for_checkpoint
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -169,19 +169,13 @@ def prepare_saved_input(
     mat_path = _find_file_by_suffix(saved_paths, ".mat")
 
     if csv_path is not None and len(saved_paths) == 1:
-        raw, sampling_rate, lead_names, csv_meta = load.read_csv_ecg(csv_path)
-        marker = (csv_meta.get("preprocessed_mode") or "").lower()
-        if marker and marker == str(norm_mode).lower() and raw.shape == (load.WINDOW_LENGTH, load.NUM_LEADS):
-            windows = raw[None, ...].astype(np.float32, copy=False)
-            reused = True
-        else:
-            units = load.infer_csv_units(raw)
-            windows, _starts = load.preprocess_to_windows(
-                raw, sampling_rate=sampling_rate, lead_names=lead_names,
-                windows_max=SLIDING_WINDOWS_MAX, norm_mode=norm_mode,
-                units=units, bandpass=bandpass,
-            )
-            reused = False
+        windows, csv_info = prepare_csv_windows(
+            csv_path, norm_mode=norm_mode, bandpass=bandpass, windows_max=SLIDING_WINDOWS_MAX
+        )
+        if csv_info["reused"]:
+            windows = windows.astype(np.float32, copy=False)
+        sampling_rate, lead_names = csv_info["sampling_rate"], csv_info["lead_names"]
+        marker, reused = csv_info["marker"], csv_info["reused"]
         center = windows.shape[0] // 2
         return {
             "input_type": "csv",

@@ -10,12 +10,12 @@ Uso:
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 import time
 
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, REPO_ROOT)
+from pathlib import Path
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT))
 
 import torch
 

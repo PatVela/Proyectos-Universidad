@@ -229,6 +229,37 @@ def predict_windows(
     return agg.astype(np.float32), per_window.astype(np.float32)
 
 
+def prepare_csv_windows(
+    csv_path: str | Path,
+    norm_mode: str,
+    bandpass: bool = True,
+    windows_max: int = 4,
+) -> tuple[np.ndarray, dict]:
+    """Lee un CSV ECG y devuelve ``(windows, info)`` preprocesados.
+
+    Si el CSV trae el marcador ``# Preprocessed: <norm_mode>`` y ya mide
+    ``(5000, 12)``, se reutiliza tal cual (``info["reused"]=True``); si no,
+    se infieren unidades y se preprocesa a ``(K, 5000, 12)``. Fuente única
+    para :func:`predict_csv` y ``webapp.prediction.prepare_saved_input``.
+    """
+    raw, sampling_rate, lead_names, csv_meta = load.read_csv_ecg(csv_path)
+    marker = (csv_meta.get("preprocessed_mode") or "").lower()
+    if marker and marker == str(norm_mode).lower() and raw.shape == (load.WINDOW_LENGTH, load.NUM_LEADS):
+        return raw[None, ...], {
+            "sampling_rate": sampling_rate, "lead_names": lead_names,
+            "marker": marker, "reused": True, "units": None, "starts": [0],
+        }
+    units = load.infer_csv_units(raw)
+    windows, starts = load.preprocess_to_windows(
+        raw, sampling_rate=sampling_rate, lead_names=lead_names,
+        windows_max=max(1, int(windows_max)), norm_mode=norm_mode,
+        units=units, bandpass=bool(bandpass),
+    )
+    return windows, {
+        "sampling_rate": sampling_rate, "lead_names": lead_names,
+        "marker": marker, "reused": False, "units": units, "starts": list(starts),
+    }
+
 def predict_csv(
     checkpoint_path: str | Path,
     csv_path: str | Path,
@@ -247,24 +278,11 @@ def predict_csv(
     torch_device = get_device(device)
     model, checkpoint, class_names = load_model(checkpoint_path, torch_device)
     pre = preprocessing_for_checkpoint(checkpoint)
-    raw, sampling_rate, lead_names, csv_meta = load.read_csv_ecg(csv_path)
-    marker = (csv_meta.get("preprocessed_mode") or "").lower()
-    windows: np.ndarray
-    if marker and marker == str(pre["norm_mode"]).lower() and raw.shape == (load.WINDOW_LENGTH, load.NUM_LEADS):
-        windows = raw[None, ...]
-        reused = True
-    else:
-        units = load.infer_csv_units(raw)
-        windows, _starts = load.preprocess_to_windows(
-            raw,
-            sampling_rate=sampling_rate,
-            lead_names=lead_names,
-            windows_max=max(1, int(windows_max)),
-            norm_mode=pre["norm_mode"],
-            units=units,
-            bandpass=bool(pre["bandpass"]),
-        )
-        reused = False
+    windows, csv_info = prepare_csv_windows(
+        csv_path, norm_mode=pre["norm_mode"], bandpass=pre["bandpass"], windows_max=windows_max
+    )
+    sampling_rate, lead_names = csv_info["sampling_rate"], csv_info["lead_names"]
+    marker, reused = csv_info["marker"], csv_info["reused"]
     if windows.shape[0] == 1:
         probabilities = predict_array(model, windows[0], torch_device)
         per_window = probabilities[None, :]

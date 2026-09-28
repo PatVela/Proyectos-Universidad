@@ -1,5 +1,8 @@
 #!/usr/bin/env python
 
+# VENDORED del Challenge PhysioNet/CinC 2020 (evaluation-2020). NO MODIFICAR:
+# cualquier cambio rompería la comparabilidad con la métrica oficial.
+
 # This file contains functions for evaluating algorithms for the 2020 PhysioNet/
 # Computing in Cardiology Challenge. You can run it as follows:
 #

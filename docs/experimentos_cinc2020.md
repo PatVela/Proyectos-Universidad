@@ -79,7 +79,7 @@ Ver resultados en [resultados_finales.md](resultados_finales.md).
 ## Robustez controlada
 
 ```powershell
-python examples/cinc2020/robustness.py $mejor data/cinc2020_12/test.h5 --thresholds "$evalMejor/thresholds_validation.csv" --output exp-files/robustness.csv
+python examples/cinc2020/robustness.py $mejor data/cinc2020_12/test.h5 --thresholds "$evalMejor/thresholds_validation.csv" --temperatures "$evalMejor/temperatures_validation.csv" --output exp-files/robustness.csv
 ```
 
 Perturbaciones incluidas: ruido gaussiano, baseline wander, escalado de amplitud y dropout de derivaciones.
