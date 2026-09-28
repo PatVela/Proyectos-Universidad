@@ -2,8 +2,8 @@
 
 Ejemplo:
     python examples/cinc2020/build_datasets.py \
-      --data_dir dataset2020 \
-      --output_dir data/cinc2020_12 \
+      --data-dir dataset2020 \
+      --output-dir data/cinc2020_12 \
       --workers 6
 """
 

@@ -17,7 +17,7 @@ $evalMejor = "eval-resnet-v2"
 
 ```powershell
 bash descargar_datos_2020.sh
-python examples/cinc2020/build_datasets.py --data_dir dataset2020 --output_dir data/cinc2020_12 --workers 8 --norm_mode physical --train_windows_max 4
+python examples/cinc2020/build_datasets.py --data-dir dataset2020 --output-dir data/cinc2020_12 --workers 8 --norm-mode physical --train-windows-max 4
 ```
 
 En Windows, la primera línea corre en una terminal Git Bash.

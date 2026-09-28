@@ -101,7 +101,7 @@ $evalMejor = "eval-resnet-v2"
 ### 1. Construir HDF5
 
 ```powershell
-python examples/cinc2020/build_datasets.py --data_dir dataset2020 --output_dir data/cinc2020_12 --workers 8 --norm_mode physical --train_windows_max 4
+python examples/cinc2020/build_datasets.py --data-dir dataset2020 --output-dir data/cinc2020_12 --workers 8 --norm-mode physical --train-windows-max 4
 ```
 
 ### 2. Entrenar ResNet-34 tipo Hannun
@@ -217,7 +217,7 @@ Para re-entrenar la ResNet con receta anti-sobreajuste (más épocas, más regul
 ### 13. Auditoría de códigos Dx
 
 ```powershell
-python examples/cinc2020/audit_dx_codes.py --data_dir dataset2020 --output dx_code_audit.csv
+python examples/cinc2020/audit_dx_codes.py --data-dir dataset2020 --output dx_code_audit.csv
 ```
 
 Recorre los `.hea`, cuenta en cuántos registros aparece cada código Dx y lo cruza con el esquema de 12 clases y el mapeo oficial de 27 puntuados. Reporta códigos del esquema con frecuencia 0 y códigos Dx sin clase asignada. En `dataset2020`: 111 códigos distintos, 27/27 oficiales presentes, 0 frecuencias 0 y 10 códigos sin clase (pre-excitación/WPW, comorbilidades no diagnosticables por ECG y hallazgos inespecíficos o técnicos).

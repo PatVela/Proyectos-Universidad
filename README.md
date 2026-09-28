@@ -185,7 +185,7 @@ python tools/check_missing.py --kind mats --data-dir dataset2020
 ### Paso 2 — Construir HDF5 (~20–40 min según CPU)
 
 ```powershell
-python examples/cinc2020/build_datasets.py --data_dir dataset2020 --output_dir data/cinc2020_12 --workers 8 --norm_mode physical --train_windows_max 4
+python examples/cinc2020/build_datasets.py --data-dir dataset2020 --output-dir data/cinc2020_12 --workers 8 --norm-mode physical --train-windows-max 4
 ```
 
 Ajuste `--workers` al número de núcleos de su CPU. Cada HDF5 contiene `signals → (N, 5000, 12)` y `labels → (N, 12)` (12 derivaciones → 500 Hz → mV + pasa-banda 0.5–50 Hz → recorte ±5 mV → 5000 muestras); en `train`, los registros largos aportan hasta 4 ventanas de 10 s; validación y test usan una ventana centrada.
@@ -349,7 +349,7 @@ Notas:
 
 * Las salidas son independientes: sigmoid por clase, no softmax.
 * Quedan fuera: WPW/preexcitación (muy infrecuente y morfológicamente singular), diagnósticos clínicos no-ECG (HF/HVD/CHD/TIA) y ruido (sin SNOMED equivalente).
-* Los registros sin ninguna de las 12 etiquetas (<1% en v2) se conservan como vectores all-zero; pueden excluirse con `--drop_no_selected_labels`.
+* Los registros sin ninguna de las 12 etiquetas (<1% en v2) se conservan como vectores all-zero; pueden excluirse con `--drop-no-selected-labels`.
 
 <p align="right">(<a href="#readme-top">volver arriba</a>)</p>
 

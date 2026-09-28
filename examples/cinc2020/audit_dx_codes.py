@@ -63,7 +63,7 @@ def scan_headers(data_dir: Path) -> tuple[int, int, Counter]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Audita códigos Dx vs esquema de 12 clases.")
-    parser.add_argument("--data_dir", default="dataset2020", help="Carpeta raíz con los .hea")
+    parser.add_argument("--data-dir", default="dataset2020", help="Carpeta raíz con los .hea")
     parser.add_argument("--output", default="dx_code_audit.csv", help="CSV de salida")
     parser.add_argument("--official", default=str(Path(__file__).parent / "official" / "dx_mapping_scored.csv"))
     args = parser.parse_args()

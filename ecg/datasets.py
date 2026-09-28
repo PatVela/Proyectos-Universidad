@@ -593,24 +593,24 @@ def build_datasets(
 # ---------------------------------------------------------------------------
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Construye HDF5 CINC2020-12 desde archivos .hea/.mat")
-    parser.add_argument("--data_dir", default=str(DEFAULT_DATA_DIR), help="Raíz local con CINC2020 training/")
-    parser.add_argument("--output_dir", default=str(DEFAULT_OUTPUT_DIR), help="Directorio de salida")
-    parser.add_argument("--drop_no_selected_labels", action="store_true", help="Excluir ECGs sin ninguna de las 12 clases")
-    parser.add_argument("--scan_only", action="store_true", help="Solo escanear headers y escribir reportes")
+    parser.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR), help="Raíz local con CINC2020 training/")
+    parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR), help="Directorio de salida")
+    parser.add_argument("--drop-no-selected-labels", action="store_true", help="Excluir ECGs sin ninguna de las 12 clases")
+    parser.add_argument("--scan-only", action="store_true", help="Solo escanear headers y escribir reportes")
     parser.add_argument("--workers", type=int, default=6, help="Procesos de preprocesamiento")
     parser.add_argument("--chunksize", type=int, default=8)
-    parser.add_argument("--write_batch_size", type=int, default=32)
-    parser.add_argument("--val_frac", type=float, default=0.15)
-    parser.add_argument("--test_frac", type=float, default=0.15)
-    parser.add_argument("--random_state", type=int, default=42)
-    parser.add_argument("--norm_mode", choices=["physical", "global_zscore", "per_lead_zscore"],
+    parser.add_argument("--write-batch-size", type=int, default=32)
+    parser.add_argument("--val-frac", type=float, default=0.15)
+    parser.add_argument("--test-frac", type=float, default=0.15)
+    parser.add_argument("--random-state", type=int, default=42)
+    parser.add_argument("--norm-mode", choices=["physical", "global_zscore", "per_lead_zscore"],
                         default=DEFAULT_NORM_MODE,
                         help="Normalización: physical=mV+clip (v2), global_zscore, per_lead_zscore (legacy v1)")
     parser.add_argument("--bandpass", dest="bandpass", action="store_true", default=True,
                         help="Aplica pasa-banda 0.5-50 Hz en modo physical (defecto: activado)")
     parser.add_argument("--no-bandpass", dest="bandpass", action="store_false",
                         help="Desactiva el pasa-banda")
-    parser.add_argument("--train_windows_max", type=int, default=4,
+    parser.add_argument("--train-windows-max", type=int, default=4,
                         help="Ventanas de 10 s por registro largo en train (val/test siempre 1 centrada)")
     args = parser.parse_args(argv)
 

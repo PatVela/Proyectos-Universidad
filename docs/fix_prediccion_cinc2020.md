@@ -82,7 +82,7 @@ pip install -r requirements.txt   # torch se instala aparte (ver README, Paso 0)
 $resnet = Get-ChildItem saved/cinc2020/cinc2020_resnet/*/best.pt | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
 
 # 1) Reconstruir HDF5 con esquema v2 (multi-ventana en train)
-python examples/cinc2020/build_datasets.py --data_dir dataset2020 --output_dir data/cinc2020_12 --workers 8 --norm_mode physical --train_windows_max 4
+python examples/cinc2020/build_datasets.py --data-dir dataset2020 --output-dir data/cinc2020_12 --workers 8 --norm-mode physical --train-windows-max 4
 
 # 2) Reentrenar (ResNet)
 python -m ecg.train examples/cinc2020/config.json -e cinc2020_resnet

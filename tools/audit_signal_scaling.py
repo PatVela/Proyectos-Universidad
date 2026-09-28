@@ -257,188 +257,228 @@ def read_header(header_path: Path):
 # ANÁLISIS DE UN REGISTRO
 # ============================================================
 
-def analyze_record(header_path: Path) -> dict:
-    """
-    Analiza un registro completo.
+class _RecordAnalyzer:
+    """Analiza un registro WFDB (.hea + .mat), una fase por método."""
 
-    Devuelve metadatos del header y estadísticas
-    de la señal digital/física.
-    """
+    def __init__(self, header_path):
+        self.header_path = header_path
+        self.result = None
+        self.record = None
+        self.mat_path = None
+        self.digital = None
+        self.fs = None
+        self.n_sig = None
+        self.sig_len = None
+        self.signal_names = None
+        self.gains = None
+        self.baselines = None
+        self.units = None
+        self.adc_res = None
+        self.adc_zero = None
+        self.init_value = None
+        self.physical = None
+        self.digital_stats = None
+        self.physical_stats = None
+        self.sat_frac = None
+        self.constant = None
+        self.leads_info = None
 
-    result = {
-        "header": header_path,
-        "db": infer_source_db(header_path),
-        "ok": False,
-        "error": None,
-    }
+    def run(self):
+        """Ejecuta todas las fases. Devuelve dict con metadatos y estadísticas."""
+        self.result = {
+            "header": self.header_path,
+            "db": infer_source_db(self.header_path),
+            "ok": False,
+            "error": None,
+        }
 
-    try:
-        record = read_header(header_path)
+        try:
+            self.load()
+            self.parse_header()
+            self.validate_dimensions()
+            self.compute_physical()
+            self.compute_global_stats()
+            self.compute_saturation()
+            self.check_constant()
+            self.build_leads()
+            self.finalize()
 
-        mat_path = header_path.with_suffix(".mat")
+        except Exception as exc:
 
-        if not mat_path.exists():
+            self.result["error"] = str(exc)
+
+        return self.result
+
+
+    def load(self):
+        """Lee header y señal digital."""
+
+        self.record = read_header(self.header_path)
+
+        self.mat_path = self.header_path.with_suffix(".mat")
+
+        if not self.mat_path.exists():
             raise FileNotFoundError(
-                f"No existe {mat_path.name}"
+                f"No existe {self.mat_path.name}"
             )
 
-        digital = load_mat_signal(mat_path)
+        self.digital = load_mat_signal(self.mat_path)
 
-        # ----------------------------------------------------
-        # Header
-        # ----------------------------------------------------
 
-        fs = float(record.fs)
-        n_sig = int(record.n_sig)
-        sig_len = int(record.sig_len)
+    def parse_header(self):
+        """Header."""
 
-        signal_names = list(record.sig_name)
+        self.fs = float(self.record.fs)
+        self.n_sig = int(self.record.n_sig)
+        self.sig_len = int(self.record.sig_len)
 
-        gains = np.asarray(
-            record.adc_gain,
+        self.signal_names = list(self.record.sig_name)
+
+        self.gains = np.asarray(
+            self.record.adc_gain,
             dtype=np.float64,
         )
 
-        baselines = np.asarray(
-            record.baseline,
+        self.baselines = np.asarray(
+            self.record.baseline,
             dtype=np.float64,
         )
 
-        units = list(record.units)
+        self.units = list(self.record.units)
 
-        adc_res = getattr(
-            record,
+        self.adc_res = getattr(
+            self.record,
             "adc_res",
             None,
         )
 
-        adc_zero = getattr(
-            record,
+        self.adc_zero = getattr(
+            self.record,
             "adc_zero",
             None,
         )
 
-        init_value = getattr(
-            record,
+        self.init_value = getattr(
+            self.record,
             "init_value",
             None,
         )
 
-        # ----------------------------------------------------
-        # Comprobaciones
-        # ----------------------------------------------------
 
-        if digital.shape[0] != n_sig:
+    def validate_dimensions(self):
+        """Comprobaciones."""
+
+        if self.digital.shape[0] != self.n_sig:
             raise ValueError(
-                f"MAT tiene {digital.shape[0]} leads, "
-                f"header indica {n_sig}"
+                f"MAT tiene {self.digital.shape[0]} leads, "
+                f"header indica {self.n_sig}"
             )
 
-        if digital.shape[1] != sig_len:
+        if self.digital.shape[1] != self.sig_len:
             raise ValueError(
-                f"MAT tiene {digital.shape[1]} muestras, "
-                f"header indica {sig_len}"
+                f"MAT tiene {self.digital.shape[1]} muestras, "
+                f"header indica {self.sig_len}"
             )
 
-        if len(gains) != n_sig:
+        if len(self.gains) != self.n_sig:
             raise ValueError(
                 "Número de gains incompatible"
             )
 
-        if len(baselines) != n_sig:
+        if len(self.baselines) != self.n_sig:
             raise ValueError(
                 "Número de baselines incompatible"
             )
 
-        # ----------------------------------------------------
-        # Señal física
-        # ----------------------------------------------------
 
-        physical = physical_from_digital(
-            digital,
-            gains,
-            baselines,
+    def compute_physical(self):
+        """Señal física."""
+
+        self.physical = physical_from_digital(
+            self.digital,
+            self.gains,
+            self.baselines,
         )
 
-        # ----------------------------------------------------
-        # Estadísticas globales
-        # ----------------------------------------------------
 
-        digital_stats = percentile_stats(
-            digital
+    def compute_global_stats(self):
+        """Estadísticas globales."""
+
+        self.digital_stats = percentile_stats(
+            self.digital
         )
 
-        physical_stats = percentile_stats(
-            physical
+        self.physical_stats = percentile_stats(
+            self.physical
         )
 
-        # ----------------------------------------------------
-        # Saturación
-        # ----------------------------------------------------
 
-        sat_frac = saturation_fraction(
-            digital
+    def compute_saturation(self):
+        """Saturación."""
+
+        self.sat_frac = saturation_fraction(
+            self.digital
         )
 
-        # ----------------------------------------------------
-        # Señales constantes
-        # ----------------------------------------------------
 
-        constant = is_constant(
-            digital
+    def check_constant(self):
+        """Señales constantes."""
+
+        self.constant = is_constant(
+            self.digital
         )
 
-        # ----------------------------------------------------
-        # Derivaciones
-        # ----------------------------------------------------
 
-        leads_info = []
+    def build_leads(self):
+        """Derivaciones."""
 
-        for i in range(n_sig):
+        self.leads_info = []
 
-            d = digital[i]
-            p = physical[i]
+        for i in range(self.n_sig):
+
+            d = self.digital[i]
+            p = self.physical[i]
 
             ds = percentile_stats(d)
             ps = percentile_stats(p)
 
             lead_info = {
                 "index": i,
-                "name": signal_names[i]
-                if i < len(signal_names)
+                "name": self.signal_names[i]
+                if i < len(self.signal_names)
                 else f"lead_{i}",
 
                 "normalized_name":
                     normalize_lead_name(
-                        signal_names[i]
+                        self.signal_names[i]
                     )
-                    if i < len(signal_names)
+                    if i < len(self.signal_names)
                     else None,
 
-                "gain": float(gains[i]),
+                "gain": float(self.gains[i]),
 
                 "baseline": float(
-                    baselines[i]
+                    self.baselines[i]
                 ),
 
                 "units":
-                    units[i]
-                    if i < len(units)
+                    self.units[i]
+                    if i < len(self.units)
                     else None,
 
                 "adc_res":
-                    adc_res[i]
-                    if adc_res is not None
+                    self.adc_res[i]
+                    if self.adc_res is not None
                     else None,
 
                 "adc_zero":
-                    adc_zero[i]
-                    if adc_zero is not None
+                    self.adc_zero[i]
+                    if self.adc_zero is not None
                     else None,
 
                 "init_value":
-                    init_value[i]
-                    if init_value is not None
+                    self.init_value[i]
+                    if self.init_value is not None
                     else None,
 
                 "digital": ds,
@@ -452,38 +492,50 @@ def analyze_record(header_path: Path) -> dict:
                     saturation_fraction(d),
             }
 
-            leads_info.append(
+            self.leads_info.append(
                 lead_info
             )
 
-        result.update(
+
+    def finalize(self):
+        """Agrega resultados al dict."""
+
+        self.result.update(
             {
                 "ok": True,
-                "fs": fs,
-                "n_sig": n_sig,
-                "sig_len": sig_len,
-                "signal_names": signal_names,
-                "gains": gains,
-                "baselines": baselines,
-                "units": units,
-                "adc_res": adc_res,
-                "adc_zero": adc_zero,
-                "init_value": init_value,
-                "digital": digital_stats,
-                "physical": physical_stats,
-                "constant": constant,
-                "saturation_fraction": sat_frac,
-                "leads": leads_info,
+                "fs": self.fs,
+                "n_sig": self.n_sig,
+                "sig_len": self.sig_len,
+                "signal_names": self.signal_names,
+                "gains": self.gains,
+                "baselines": self.baselines,
+                "units": self.units,
+                "adc_res": self.adc_res,
+                "adc_zero": self.adc_zero,
+                "init_value": self.init_value,
+                "digital": self.digital_stats,
+                "physical": self.physical_stats,
+                "constant": self.constant,
+                "saturation_fraction": self.sat_frac,
+                "leads": self.leads_info,
             }
         )
 
-        return result
 
-    except Exception as exc:
 
-        result["error"] = str(exc)
+def analyze_record(header_path: Path) -> dict:
+    """
+    Analiza un registro completo.
 
-        return result
+    Devuelve metadatos del header y estadísticas
+    de la señal digital/física.
+    """
+
+    return _RecordAnalyzer(
+        header_path
+    ).run()
+
+
 
 
 # ============================================================
